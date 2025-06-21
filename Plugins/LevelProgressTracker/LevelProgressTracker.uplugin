@@ -1,0 +1,28 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "Level Progress Tracker",
+	"Description": "The Level Progress Tracker (LPT) subsystem provides control over the level resource loading process, enabling real-time monitoring of the percentage of loading progress, the current number of loaded assets, the total number of assets, and the level name.",
+	"Category": "Experimental",
+	"CreatedBy": "Pavel Gornostaev",
+	"CreatedByURL": "https://github.com/Pavreally",
+	"DocsURL": "https://github.com/Pavreally/LevelProgressTracker",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": true,
+	"IsBetaVersion": true,
+	"IsExperimentalVersion": true,
+	"Installed": true,
+	"Modules": [
+		{
+			"Name": "LevelProgressTracker",
+			"Type": "Runtime",
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [
+				"Win64",
+				"Android"
+			]
+		}
+	]
+}
