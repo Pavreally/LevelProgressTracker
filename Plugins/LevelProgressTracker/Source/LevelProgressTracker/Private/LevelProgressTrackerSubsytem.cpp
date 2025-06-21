@@ -14,7 +14,7 @@ void ULevelProgressTrackerSubsytem::Initialize(FSubsystemCollectionBase& Collect
 {
 	Super::Initialize(Collection);
 
-	// Subscribe to be notified when the global level download is complete
+	// Subscribe to be notified when the global level load is complete
 	FCoreUObjectDelegates::PostLoadMapWithWorld.AddUObject(
 		this,
 		&ULevelProgressTrackerSubsytem::OnPostLoadMapWithWorld

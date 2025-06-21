@@ -161,14 +161,14 @@ protected:
 	/**
 	 * Scans the selected level and, based on the received data, asynchronously loads all found assets and resources into memory.
 	 * @param LevelSoftPtr Soft link to target level.
-	 * @param bIsStreamingLevel Will the level be downloaded via streaming.
+	 * @param bIsStreamingLevel Will the level be loaded via streaming.
 	 * @param LevelInstanceState If the level is streaming, then parameters for function 'LoadLevelInstanceBySoftObjectPtr()' are passed to it.
 	 */
 	UFUNCTION()
 	void AsyncLoadAssetsLPT(const TSoftObjectPtr<UWorld> LevelSoftPtr, bool bIsStreamingLevel = false, FLevelInstanceState LevelInstanceState = FLevelInstanceState());
 
 private:
-	// Callback when all downloads are complete.
+	// Callback when all loads are complete.
 	UFUNCTION()
 	void OnAllAssetsLoaded(FName PackageName, bool bIsStreamingLevel);
 
