@@ -9,8 +9,17 @@ LPT is a plugin for Unreal Engine 5 that allows you to quickly and easily create
 > The plugin has been pre-packaged only for Win64 and Android.
 
 ## Latest Updates
-`Experimental` `Beta` `Version 1.0.0` 
+`Experimental` `Beta`
+
+`Version 1.0.1` 
 - Build version for Unreal Engine 5.6.0
+- `New` A new parameter "White List Dir" has been added to the level loading functions, designed for selectively loading only the necessary resources. This can be useful if you're using a World Partition level with a large number of placed assets. Moreover, you don't need to specify the full path to your resources — just a keyword that may be contained in a soft reference pointing to an asset collection is enough. If you want to include all level resources, simply leave this parameter unconnected (or empty if using C++).
+
+<br>
+Fixes:
+
+- Fixed a critical bug that occurred when unloading all streaming levels during deinitialization.
+- Adjusted debug messages.
 
 ## What it's for
 - Tracking the progress of level asset loading.
@@ -39,6 +48,7 @@ An interactive step-by-step tutorial on how to use LPT can be found in the file:
 ![Window Manager](./_Misc/Tutorial/Tutorial_2.jpg)
 ![Window Manager](./_Misc/Tutorial/Tutorial_3.jpg)
 ![Window Manager](./_Misc/Tutorial/Tutorial_4.jpg)
+![Window Manager](./_Misc/Tutorial/Tutorial_5.jpg)
 
 ## (C++) Documentaion
 All sources contain self-documenting code.

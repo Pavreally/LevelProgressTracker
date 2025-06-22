@@ -122,21 +122,24 @@ public:
 	/**
 	 * A function that opens a new level. Similar to the standard 'OpenLevel' function.
 	 * @param LevelSoftPtr Soft link to target level.
+	 * @param WhiteListDir A list of keywords used to specify paths to directories containing the necessary resources for the level. Only these will be processed and loaded. (Note: the full path does not need to be specified. For example, "/Game/" will match any path that contains this sequence.)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "LPT Subsystem")
-	void OpenLevelLPT(const TSoftObjectPtr<UWorld> LevelSoftPtr);
+	UFUNCTION(BlueprintCallable, Category = "LPT Subsystem", meta = (AutoCreateRefTerm = "WhiteListDir"))
+	void OpenLevelLPT(const TSoftObjectPtr<UWorld> LevelSoftPtr, TArray<FName> WhiteListDir);
 
 	/**
 	 * Function that causes an asynchronous loading of an embedded level into the current game level. 
 	 * Similar to the standard 'LoadLevelInstanceBySoftObjectPtr' function.
 	 * @param LevelSoftPtr Soft link to target level.
+	 * @param WhiteListDir A list of keywords used to specify paths to directories containing the necessary resources for the level. Only these will be processed and loaded. (Note: the full path does not need to be specified. For example, "/Game/" will match any path that contains this sequence.)
 	 * @param Transform Position and size of the game level.
 	 * @param OptionalLevelStreamingClass Allows you to specify a custom class instead of the standard one.
 	 * @param bLoadAsTempPackage If this is true, the level is loaded as a temporary package that is not saved to disk.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "LPT Subsystem")
+	UFUNCTION(BlueprintCallable, Category = "LPT Subsystem", meta = (AutoCreateRefTerm = "WhiteListDir"))
 	void LoadLevelInstanceLPT(
 		TSoftObjectPtr<UWorld> LevelSoftPtr,
+		TArray<FName> WhiteListDir,
 		const FTransform Transform,
 		TSubclassOf<ULevelStreamingDynamic> OptionalLevelStreamingClass = nullptr,
 		bool bLoadAsTempPackage = false
@@ -161,11 +164,16 @@ protected:
 	/**
 	 * Scans the selected level and, based on the received data, asynchronously loads all found assets and resources into memory.
 	 * @param LevelSoftPtr Soft link to target level.
+	 * @param WhiteListDir A list of keywords used to specify paths to directories containing the necessary resources for the level. Only these will be processed and loaded. (Note: the full path does not need to be specified. For example, "/Game/" will match any path that contains this sequence.)
 	 * @param bIsStreamingLevel Will the level be loaded via streaming.
 	 * @param LevelInstanceState If the level is streaming, then parameters for function 'LoadLevelInstanceBySoftObjectPtr()' are passed to it.
 	 */
 	UFUNCTION()
-	void AsyncLoadAssetsLPT(const TSoftObjectPtr<UWorld> LevelSoftPtr, bool bIsStreamingLevel = false, FLevelInstanceState LevelInstanceState = FLevelInstanceState());
+	void AsyncLoadAssetsLPT(
+		const TSoftObjectPtr<UWorld> LevelSoftPtr,
+		TArray<FName>& WhiteListDir,
+		bool bIsStreamingLevel = false,
+		FLevelInstanceState LevelInstanceState = FLevelInstanceState());
 
 private:
 	// Callback when all loads are complete.

@@ -37,20 +37,20 @@ void ULevelProgressTrackerSubsytem::Deinitialize()
 
 #pragma endregion SUBSYSTEM
 
-void ULevelProgressTrackerSubsytem::OpenLevelLPT(const TSoftObjectPtr<UWorld> LevelSoftPtr)
+void ULevelProgressTrackerSubsytem::OpenLevelLPT(const TSoftObjectPtr<UWorld> LevelSoftPtr, TArray<FName> WhiteListDir)
 {
 	if (LevelSoftPtr.IsNull())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("LPT (LoadLevelInstanceLPT): Invalid level pointer."));
+		UE_LOG(LogTemp, Warning, TEXT("LPT (OpenLevelLPT): Invalid level pointer."));
 
 		return;
 	}
 
 	// Preloads the target level's resources, waits for all resources to load, and starts the level itself.
-	AsyncLoadAssetsLPT(LevelSoftPtr);
+	AsyncLoadAssetsLPT(LevelSoftPtr, WhiteListDir);
 }
 
-void ULevelProgressTrackerSubsytem::LoadLevelInstanceLPT(TSoftObjectPtr<UWorld> LevelSoftPtr, const FTransform Transform, TSubclassOf<ULevelStreamingDynamic> OptionalLevelStreamingClass, bool bLoadAsTempPackage)
+void ULevelProgressTrackerSubsytem::LoadLevelInstanceLPT(TSoftObjectPtr<UWorld> LevelSoftPtr, TArray<FName> WhiteListDir, const FTransform Transform, TSubclassOf<ULevelStreamingDynamic> OptionalLevelStreamingClass, bool bLoadAsTempPackage)
 {
 	if (LevelSoftPtr.IsNull())
 	{
@@ -65,7 +65,7 @@ void ULevelProgressTrackerSubsytem::LoadLevelInstanceLPT(TSoftObjectPtr<UWorld> 
 	LevelInstanceState.bLoadAsTempPackage = bLoadAsTempPackage;
 
 	// Preloads the target level's resources, waits for all resources to load, and starts the level itself.
-	AsyncLoadAssetsLPT(LevelSoftPtr, true, LevelInstanceState);
+	AsyncLoadAssetsLPT(LevelSoftPtr, WhiteListDir, true, LevelInstanceState);
 }
 
 void ULevelProgressTrackerSubsytem::UnloadLevelInstanceLPT(const TSoftObjectPtr<UWorld> LevelSoftPtr)
@@ -112,20 +112,27 @@ void ULevelProgressTrackerSubsytem::UnloadAllLPT()
 
 		if (LevelState.bIsStreamingLevel == true)
 		{
-			LevelState.Handle->ReleaseHandle();
-			LevelState.Handle.Reset();
-			LevelState.LevelInstanceState.LevelReference->SetIsRequestingUnloadAndRemoval(true);
+			if (LevelState.Handle.IsValid())
+			{
+				LevelState.Handle->ReleaseHandle();
+				LevelState.Handle.Reset();
+			}
+
+			if (LevelState.LevelInstanceState.LevelReference)
+			{
+				LevelState.LevelInstanceState.LevelReference->SetIsRequestingUnloadAndRemoval(true);
+			}
 		}
 	}
 
 	LevelLoadedMap.Empty();
 }
 
-void ULevelProgressTrackerSubsytem::AsyncLoadAssetsLPT(const TSoftObjectPtr<UWorld> LevelSoftPtr, bool bIsStreamingLevel, FLevelInstanceState LevelInstanceState)
+void ULevelProgressTrackerSubsytem::AsyncLoadAssetsLPT(const TSoftObjectPtr<UWorld> LevelSoftPtr, TArray<FName>& WhiteListDir, bool bIsStreamingLevel, FLevelInstanceState LevelInstanceState)
 {
 	if (LevelSoftPtr.IsNull())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("LPT (AsyncLoadAssets): Invalid level pointer."));
+		UE_LOG(LogTemp, Warning, TEXT("LPT (AsyncLoadAssetsLPT): Invalid level pointer."));
 
 		return;
 	}
@@ -144,6 +151,7 @@ void ULevelProgressTrackerSubsytem::AsyncLoadAssetsLPT(const TSoftObjectPtr<UWor
 
 	// Gather dependencies
 	TArray<FName> Dependencies;
+
 	Registry.GetDependencies(
 		PackageName,
 		Dependencies,
@@ -158,11 +166,39 @@ void ULevelProgressTrackerSubsytem::AsyncLoadAssetsLPT(const TSoftObjectPtr<UWor
 		return;
 	}
 
-	// Convert to soft paths
+	// Softlink conversion and optional whitelist filtering
 	TArray<FSoftObjectPath> Paths;
-	for (const FName& Dependence : Dependencies)
+	TArray<FString> SWhiteListDir;
+	SWhiteListDir.Reserve(WhiteListDir.Num());
+	for (const FName& Dir : WhiteListDir)
 	{
-		Paths.Add(FSoftObjectPath(Dependence.ToString()));
+		SWhiteListDir.Add(Dir.ToString());
+	}
+	// Whitelist filtering
+	if (WhiteListDir.IsEmpty())
+	{
+		for (const FName& Dependence : Dependencies)
+		{
+			Paths.Add(FSoftObjectPath(Dependence.ToString()));
+		}
+	}
+	else
+	{
+		for (const FName& Dependence : Dependencies)
+		{
+			FString DependencePath = Dependence.ToString();
+			// Selecting dependencies by whitelist
+			for (const FString& Keyword : SWhiteListDir)
+			{
+				if (!Keyword.IsEmpty() && DependencePath.Contains(Keyword))
+				{
+					// Asserting dependencies for loading
+					Paths.Add(FSoftObjectPath(DependencePath));
+
+					break;
+				}
+			}
+		}
 	}
 
 	// Setup load stat
