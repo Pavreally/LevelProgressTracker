@@ -31,6 +31,15 @@
 #include "LevelProgressTrackerSubsytem.generated.h"
 
 struct FStreamableHandle;
+class IAssetRegistry;
+
+UENUM()
+enum class ELevelLoadMethod : uint8
+{
+	Standard UMETA(DisplayName = "Standard", ToolTip = ""),
+	LevelStreaming UMETA(DisplayName = "LevelStreaming", ToolTip = ""),
+	WorldPartition UMETA(DisplayName = "WorldPartition", ToolTip = "")
+};
 
 // Contains data for a streaming embedded game level.
 USTRUCT(BlueprintType)
@@ -50,6 +59,9 @@ public:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "LPT Subsystem", meta = (ToolTip = "If this is true, the level is loaded as a temporary package that is not saved to disk."))
 	bool bLoadAsTempPackage = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "LPT Subsystem", meta = (ToolTip = "If this is true, the level is loaded as a temporary package that is not saved to disk."))
+	bool IsLoaded = false;
 };
 
 // Primary structure for information about a loadable game level.
@@ -73,8 +85,8 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "LPT Subsystem", meta = (ToolTip = "Total assets that have been loaded into memory and are currently held in memory."))
 	int32 LoadedAssets = 0;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "LPT Subsystem", meta = (ToolTip = "If true, then the level is streaming (in this case, the FLevelInstanceState structure is used). If false, then this is a regular level that is loaded similarly to the 'OpenLevel' function."))
-	bool bIsStreamingLevel = false;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "LPT Subsystem", meta = (ToolTip = ""))
+	ELevelLoadMethod LoadMethod = ELevelLoadMethod::Standard;
 
 	UPROPERTY()
 	FLevelInstanceState LevelInstanceState;
@@ -95,29 +107,17 @@ public:
 	//~End USubsystem
 
 #pragma region DELEGATES
-	DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(FOnLevelLoadProgressLPT, TSoftObjectPtr<UWorld>, LevelSoftPtr, FName, LevelName, FName, PackageName, float, Progress);
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_FiveParams(FOnLevelLoadProgressLPT, TSoftObjectPtr<UWorld>, LevelSoftPtr, FName, LevelName, float, Progress, int32, LoadedAssets, int32, TotalAssets);
 	// Notification about the current progress of asset loading.
 	UPROPERTY(BlueprintAssignable, Category = "LPT Subsystem")
 	FOnLevelLoadProgressLPT OnLevelLoadProgressLPT;
 
-	DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnInstanceLevelLoadedLPT, TSoftObjectPtr<UWorld>, LevelSoftPtr, FName, LevelName);
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnLevelLoadedLPT, TSoftObjectPtr<UWorld>, LevelSoftPtr, FName, LevelName);
 	// Streaming level loading notification.
 	UPROPERTY(BlueprintAssignable, Category = "LPT Subsystem")
-	FOnInstanceLevelLoadedLPT OnInstanceLevelLoadedLPT;
-
-	DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGlobalLevelLoadedLPT, TSoftObjectPtr<UWorld>, LevelSoftPtr, FName, LevelName);
-	// Delegate for the case of loading a level via the 'OpenLevel' function.
-	UPROPERTY(BlueprintAssignable, Category = "LPT Subsystem")
-	FOnGlobalLevelLoadedLPT OnGlobalLevelLoadedLPT;
+	FOnLevelLoadedLPT OnLevelLoadedLPT;
 
 #pragma endregion DELEGATES
-
-	/**
-	 * The main data storage of the LPT subsystem. It stores information about the level and a reference to resources, 
-	 * which keeps resources in memory and prevents the garbage collector from cleaning them up before the level is quickly loaded.
-	 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "LPT Subsystem", meta = (ToolTip = "The main data storage of the LPT subsystem."))
-	TMap<FName, FLevelState> LevelLoadedMap;
 
 	/**
 	 * A function that opens a new level. Similar to the standard 'OpenLevel' function.
@@ -158,9 +158,27 @@ public:
 	 * handing over memory control to the standard Unreal Enigne system.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "LPT Subsystem")
-	void UnloadAllLPT();
+	void UnloadAllLevelInstanceLPT();
 
 protected:
+	// Determining the level type (World Partition).
+	bool CheckWorldPartition(const TSoftObjectPtr<UWorld>& LevelSoftPtr, IAssetRegistry& Registry);
+
+	/**
+	 * Checks the whitelist and filters the data if it is in it.
+	 * @param WhiteListDir Whitelist containing directories of files allowed to be loaded before the level is opened.
+	 * @param Dependencies Contains the names of all package dependencies.
+	 * @param Paths Contains links to assets filtered by WhiteListDir.
+	 */
+	void GetFilteredWhiteList(TArray<FName>& WhiteListDir, TArray<FName>& Dependencies, TArray<FSoftObjectPath> &Paths);
+
+private:
+	/**
+	 * The main data storage of the LPT subsystem. It stores information about the level and a reference to resources, 
+	 * which keeps resources in memory and prevents the garbage collector from cleaning them up before the level is quickly loaded.
+	 */
+	TMap<FName, TSharedPtr<FLevelState>> LevelLoadedMap;
+
 	/**
 	 * Scans the selected level and, based on the received data, asynchronously loads all found assets and resources into memory.
 	 * @param LevelSoftPtr Soft link to target level.
@@ -175,14 +193,19 @@ protected:
 		bool bIsStreamingLevel = false,
 		FLevelInstanceState LevelInstanceState = FLevelInstanceState());
 
-private:
 	// Callback when all loads are complete.
-	UFUNCTION()
-	void OnAllAssetsLoaded(FName PackageName, bool bIsStreamingLevel);
+	void OnAllAssetsLoaded(FName PackagePath, bool bIsStreamingLevel, TSharedRef<FLevelState> LevelState);
 
 	// Сallback when the global level is fully loaded.
 	void OnPostLoadMapWithWorld(UWorld* LoadedWorld);
 
 	// Callback when loading each asset.
-	void HandleAssetLoaded(TSharedRef<FStreamableHandle> Handle, FName PackageName);
+	void HandleAssetLoaded(TSharedRef<FStreamableHandle> Handle, FName PackagePath, TSharedRef<FLevelState> LevelState);
+
+	// Request to open a game level
+	void StartLevelLPT(FName PackagePath, bool bIsStreamingLevel, TSharedRef<FLevelState> LevelState);
+
+	// Call after loading the streaming level
+	UFUNCTION()
+	void OnLevelShown();
 };

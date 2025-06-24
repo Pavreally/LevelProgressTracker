@@ -11,25 +11,28 @@ LPT is a plugin for Unreal Engine 5 that allows you to quickly and easily create
 ## Latest Updates
 `Experimental` `Beta`
 
-`Version 1.0.1` 
+`Version 1.1.0` 
 - Build version for Unreal Engine 5.6.0
-- `New` A new parameter "White List Dir" has been added to the level loading functions, designed for selectively loading only the necessary resources. This can be useful if you're using a World Partition level with a large number of placed assets. Moreover, you don't need to specify the full path to your resources — just a keyword that may be contained in a soft reference pointing to an asset collection is enough. If you want to include all level resources, simply leave this parameter unconnected (or empty if using C++).
-
-<br>
-Fixes:
-
-- Fixed a critical bug that occurred when unloading all streaming levels during deinitialization.
-- Adjusted debug messages.
+- Code refactoring.
+- Improved code security.
+- Performance enhancements: redundant data array processing segments were removed.
+- Increased versatility of the subsystem and improved ease of use during loading screen development.
+- Simplified level load completion delegate system—now unified.
+- The system now notifies you when the level itself is fully loaded, rather than just its assets. Streaming levels are now displayed only when they are fully ready and loaded.
+- For streaming levels, resources are now released immediately after the level is loaded, not just during unloading.
+- Automatic level type recognition: World Partition, Streaming Level, or regular.
+- Multithreaded level management support.
 
 ## What it's for
 - Tracking the progress of level asset loading.
 
 ## Features
 - Ultra-fast setup and creation of a loading screen for level transitions.
+- Automatically detects the level type.
 - Tracks the loading progress of both regular and streaming levels.
 - Automatically scans specified levels for assets and monitors their loading progress in real time.
 - Tracks level asset loading packages and their count.
-- Supports subscribing to notifications when level assets finish loading.
+- The "White List Dir" parameter in the level loading function is designed to selectively load only specific assets. This can be useful when working with a World Partition level containing a large number of placed assets. Moreover, you don’t need to specify the full path to the assets—just a keyword that may be present in a soft reference pointing to an asset collection is enough. If you want to include all level assets, simply leave this parameter unconnected (or empty, if using C++).
 
 ## Install
 
@@ -48,7 +51,6 @@ An interactive step-by-step tutorial on how to use LPT can be found in the file:
 ![Window Manager](./_Misc/Tutorial/Tutorial_2.jpg)
 ![Window Manager](./_Misc/Tutorial/Tutorial_3.jpg)
 ![Window Manager](./_Misc/Tutorial/Tutorial_4.jpg)
-![Window Manager](./_Misc/Tutorial/Tutorial_5.jpg)
 
 ## (C++) Documentaion
 All sources contain self-documenting code.

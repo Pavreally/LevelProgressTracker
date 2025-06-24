@@ -1,12 +1,14 @@
 // Pavel Gornostaev <https://github.com/Pavreally>
 
 #include "LevelProgressTrackerSubsytem.h"
+#include "Engine/World.h"
+#include "Engine/Level.h"
 #include "Engine/StreamableManager.h"
 #include "Engine/AssetManager.h"
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "AssetRegistry/AssetData.h"
 #include "AssetRegistry/IAssetRegistry.h"
 #include "Kismet/GameplayStatics.h"
-#include "Engine/World.h"
 
 
 #pragma region SUBSYSTEM
@@ -27,10 +29,9 @@ void ULevelProgressTrackerSubsytem::Deinitialize()
 
 	// Clearing delegates
 	OnLevelLoadProgressLPT.Clear();
-	OnInstanceLevelLoadedLPT.Clear();
-	OnGlobalLevelLoadedLPT.Clear();
+	OnLevelLoadedLPT.Clear();
 
-	UnloadAllLPT();
+	UnloadAllLevelInstanceLPT();
 
 	Super::Deinitialize();
 }
@@ -77,9 +78,9 @@ void ULevelProgressTrackerSubsytem::UnloadLevelInstanceLPT(const TSoftObjectPtr<
 		return;
 	}
 
-	FName PackageName = FName(*LevelSoftPtr.ToSoftObjectPath().GetLongPackageName());
+	FName PackagePath = FName(*LevelSoftPtr.ToSoftObjectPath().GetLongPackageName());
 
-	if (FLevelState* LevelState = LevelLoadedMap.Find(PackageName))
+	if (TSharedPtr<FLevelState> LevelState = LevelLoadedMap.FindRef(PackagePath))
 	{
 		if (!LevelState->LevelInstanceState.LevelReference)
 		{
@@ -89,6 +90,10 @@ void ULevelProgressTrackerSubsytem::UnloadLevelInstanceLPT(const TSoftObjectPtr<
 		}
 
 		// Unloading streaming level
+		LevelState->LevelInstanceState.LevelReference->OnLevelShown.RemoveDynamic(
+			this,
+			&ULevelProgressTrackerSubsytem::OnLevelShown
+		);
 		LevelState->LevelInstanceState.LevelReference->SetIsRequestingUnloadAndRemoval(true);
 
 		if (LevelState->Handle.IsValid())
@@ -97,30 +102,35 @@ void ULevelProgressTrackerSubsytem::UnloadLevelInstanceLPT(const TSoftObjectPtr<
 			LevelState->Handle.Reset();
 		}
 
-		LevelLoadedMap.Remove(PackageName);
+		LevelLoadedMap.Remove(PackagePath);
 	}
 }
 
-void ULevelProgressTrackerSubsytem::UnloadAllLPT()
+void ULevelProgressTrackerSubsytem::UnloadAllLevelInstanceLPT()
 {
 	if (LevelLoadedMap.IsEmpty())
 		return;
 
-	for (TPair<FName, FLevelState>& Level : LevelLoadedMap)
+	for (TPair<FName, TSharedPtr<FLevelState>>& Level : LevelLoadedMap)
 	{
-		FLevelState& LevelState = Level.Value;
+		TSharedPtr<FLevelState>& LevelState = Level.Value;
 
-		if (LevelState.bIsStreamingLevel == true)
+		if (LevelState->LoadMethod == ELevelLoadMethod::LevelStreaming)
 		{
-			if (LevelState.Handle.IsValid())
+			if (LevelState->Handle.IsValid())
 			{
-				LevelState.Handle->ReleaseHandle();
-				LevelState.Handle.Reset();
+				LevelState->Handle->ReleaseHandle();
+				LevelState->Handle.Reset();
 			}
 
-			if (LevelState.LevelInstanceState.LevelReference)
+			if (LevelState->LevelInstanceState.LevelReference)
 			{
-				LevelState.LevelInstanceState.LevelReference->SetIsRequestingUnloadAndRemoval(true);
+				// Unloading streaming level
+				LevelState->LevelInstanceState.LevelReference->OnLevelShown.RemoveDynamic(
+					this,
+					&ULevelProgressTrackerSubsytem::OnLevelShown
+				);
+				LevelState->LevelInstanceState.LevelReference->SetIsRequestingUnloadAndRemoval(true);
 			}
 		}
 	}
@@ -139,10 +149,10 @@ void ULevelProgressTrackerSubsytem::AsyncLoadAssetsLPT(const TSoftObjectPtr<UWor
 
 	FAssetRegistryModule& RegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
 	IAssetRegistry& Registry = RegistryModule.Get();
-	FName PackageName = FName(*LevelSoftPtr.ToSoftObjectPath().GetLongPackageName());
+	FName PackagePath = FName(*LevelSoftPtr.ToSoftObjectPath().GetLongPackageName());
 	FString TargetLevelName = LevelSoftPtr.ToSoftObjectPath().GetAssetName();
 
-	if (LevelLoadedMap.Find(PackageName))
+	if (LevelLoadedMap.Contains(PackagePath))
 	{
 		UE_LOG(LogTemp, Warning, TEXT("LPT (AsyncLoadAssetsLPT): The requested level \"%s\" is currently loading or has loaded."), *TargetLevelName);
 
@@ -153,7 +163,7 @@ void ULevelProgressTrackerSubsytem::AsyncLoadAssetsLPT(const TSoftObjectPtr<UWor
 	TArray<FName> Dependencies;
 
 	Registry.GetDependencies(
-		PackageName,
+		PackagePath,
 		Dependencies,
 		UE::AssetRegistry::EDependencyCategory::Package,
 		UE::AssetRegistry::FDependencyQuery()
@@ -161,18 +171,115 @@ void ULevelProgressTrackerSubsytem::AsyncLoadAssetsLPT(const TSoftObjectPtr<UWor
 
 	if (Dependencies.Num() == 0)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("LPT (AsyncLoadAssetsLPT): No assets found to load for level '%s'."), *PackageName.ToString());
+		UE_LOG(LogTemp, Warning, TEXT("LPT (AsyncLoadAssetsLPT): No assets found to load for level '%s'."), *PackagePath.ToString());
 		
 		return;
 	}
 
 	// Softlink conversion and optional whitelist filtering
 	TArray<FSoftObjectPath> Paths;
-	TArray<FString> SWhiteListDir;
-	SWhiteListDir.Reserve(WhiteListDir.Num());
+	GetFilteredWhiteList(WhiteListDir, Dependencies, Paths);
+
+	// Setup load stat
+	TSharedRef<FLevelState> LevelState = MakeShared<FLevelState>();
+	LevelState->LevelSoftPtr = LevelSoftPtr;
+	LevelState->LevelName = FName(TargetLevelName);
+	LevelState->TotalAssets = Paths.Num();
+	LevelState->LoadedAssets = 0;
+	LevelState->LevelInstanceState = LevelInstanceState;
+
+	// Determining the level type (World Partition)
+	if (!bIsStreamingLevel && CheckWorldPartition(LevelSoftPtr, Registry))
+	{
+		LevelState->LoadMethod = ELevelLoadMethod::WorldPartition;
+	}
+	else if (bIsStreamingLevel)
+	{
+		LevelState->LoadMethod = ELevelLoadMethod::LevelStreaming;
+	}
+
+	// Request async load
+	FStreamableManager& StreamableManager = UAssetManager::Get().GetStreamableManager();
+	TSharedPtr<FStreamableHandle> Handle = StreamableManager.RequestAsyncLoad(
+		Paths,
+		FStreamableDelegate::CreateUObject(
+			this,
+			&ULevelProgressTrackerSubsytem::OnAllAssetsLoaded,
+			PackagePath,
+			bIsStreamingLevel,
+			LevelState),
+		FStreamableManager::AsyncLoadHighPriority
+	);
+
+	if (Handle.IsValid())
+	{
+		Handle->BindUpdateDelegate(FStreamableUpdateDelegate::CreateUObject(
+			this,
+			&ULevelProgressTrackerSubsytem::HandleAssetLoaded,
+			PackagePath,
+			LevelState
+		));
+		LevelState->Handle = Handle;
+	}
+
+	LevelLoadedMap.Add(PackagePath, LevelState);
+}
+
+void ULevelProgressTrackerSubsytem::OnAllAssetsLoaded(FName PackagePath, bool bIsStreamingLevel, TSharedRef<FLevelState> LevelState)
+{
+	// Ensure LoadedAssets equals TotalAssets for accurate 100% reporting
+	LevelState->LoadedAssets = LevelState->TotalAssets;
+
+	// Broadcast final progress and loaded events
+	OnLevelLoadProgressLPT.Broadcast(LevelState->LevelSoftPtr, LevelState->LevelName, 1.f, LevelState->LoadedAssets, LevelState->TotalAssets);
+
+	StartLevelLPT(PackagePath, bIsStreamingLevel, LevelState);
+}
+
+void ULevelProgressTrackerSubsytem::StartLevelLPT(FName PackagePath, bool bIsStreamingLevel, TSharedRef<FLevelState> LevelState)
+{
+	if (bIsStreamingLevel)
+	{
+		// Load Level Instance
+		bool bOutSuccess = false;
+		const FString OptionalLevelNameOverride = TEXT("");
+
+		ULevelStreamingDynamic* StreamingLevel = ULevelStreamingDynamic::LoadLevelInstanceBySoftObjectPtr(
+			this,
+			LevelState->LevelSoftPtr,
+			LevelState->LevelInstanceState.Transform,
+			bOutSuccess,
+			OptionalLevelNameOverride,
+			LevelState->LevelInstanceState.OptionalLevelStreamingClass,
+			LevelState->LevelInstanceState.bLoadAsTempPackage
+		);
+
+		if (StreamingLevel)
+		{
+			LevelState->LevelInstanceState.LevelReference = StreamingLevel;
+
+			// Subscribe to the event when the streaming level is fully opened and loaded
+			StreamingLevel->OnLevelShown.AddDynamic(
+				this,
+				&ULevelProgressTrackerSubsytem::OnLevelShown
+			);
+		}
+	}
+	else
+	{
+		// Open Level
+		UGameplayStatics::OpenLevel(this, PackagePath);
+	}
+}
+
+void ULevelProgressTrackerSubsytem::GetFilteredWhiteList(TArray<FName>& WhiteListDir, TArray<FName>& Dependencies, TArray<FSoftObjectPath> &Paths)
+{
+	TArray<FString> WhiteListDirToString;
+
+	WhiteListDirToString.Reserve(WhiteListDir.Num());
 	for (const FName& Dir : WhiteListDir)
 	{
-		SWhiteListDir.Add(Dir.ToString());
+		WhiteListDirToString.Add(Dir.ToString());
 	}
 	// Whitelist filtering
 	if (WhiteListDir.IsEmpty())
@@ -188,7 +295,7 @@ void ULevelProgressTrackerSubsytem::AsyncLoadAssetsLPT(const TSoftObjectPtr<UWor
 		{
 			FString DependencePath = Dependence.ToString();
 			// Selecting dependencies by whitelist
-			for (const FString& Keyword : SWhiteListDir)
+			for (const FString& Keyword : WhiteListDirToString)
 			{
 				if (!Keyword.IsEmpty() && DependencePath.Contains(Keyword))
 				{
@@ -200,93 +307,37 @@ void ULevelProgressTrackerSubsytem::AsyncLoadAssetsLPT(const TSoftObjectPtr<UWor
 			}
 		}
 	}
+}
 
-	// Setup load stat
-	FLevelState LevelState;
-	LevelState.LevelSoftPtr = LevelSoftPtr;
-	LevelState.LevelName = FName(TargetLevelName);
-	LevelState.TotalAssets = Paths.Num();
-	LevelState.LoadedAssets = 0;
-	LevelState.bIsStreamingLevel = bIsStreamingLevel;
-	LevelState.LevelInstanceState = LevelInstanceState;
+void ULevelProgressTrackerSubsytem::HandleAssetLoaded(TSharedRef<FStreamableHandle> Handle, FName PackagePath, TSharedRef<FLevelState> LevelState)
+{
+	LevelState->LoadedAssets = FMath::Clamp(LevelState->LoadedAssets + 1, 0, LevelState->TotalAssets);
 
-	// Request async load
-	FStreamableManager& StreamableManager = UAssetManager::Get().GetStreamableManager();
-	TSharedPtr<FStreamableHandle> Handle = StreamableManager.RequestAsyncLoad(
-		Paths,
-		FStreamableDelegate::CreateUObject(
-			this,
-			&ULevelProgressTrackerSubsytem::OnAllAssetsLoaded,
-			PackageName,
-			bIsStreamingLevel),
-		FStreamableManager::AsyncLoadHighPriority
+	// Check if there are no loaded assets, then display the loading progress
+	float Progress = LevelState->TotalAssets > 0 ? (float)LevelState->LoadedAssets / (float)LevelState->TotalAssets : 1.f;
+
+	OnLevelLoadProgressLPT.Broadcast(LevelState->LevelSoftPtr, LevelState->LevelName, Progress, LevelState->LoadedAssets, LevelState->TotalAssets);
+}
+
+bool ULevelProgressTrackerSubsytem::CheckWorldPartition(const TSoftObjectPtr<UWorld>& LevelSoftPtr, IAssetRegistry& Registry)
+{
+	FAssetData AssetData = Registry.GetAssetByObjectPath(
+		LevelSoftPtr.ToSoftObjectPath(),
+		false,
+		false
 	);
 
-	if (Handle.IsValid())
+	if (AssetData.IsValid())
 	{
-		Handle->BindUpdateDelegate(FStreamableUpdateDelegate::CreateUObject(
-			this,
-			&ULevelProgressTrackerSubsytem::HandleAssetLoaded,
-			PackageName
-		));
-		LevelState.Handle = Handle;
-	}
+		FAssetTagValueRef PartitioneValue = AssetData.TagsAndValues.FindTag(TEXT("LevelIsPartitioned"));
 
-	LevelLoadedMap.Add(PackageName, MoveTemp(LevelState));
-}
-
-void ULevelProgressTrackerSubsytem::OnAllAssetsLoaded(FName PackageName, bool bIsStreamingLevel)
-{
-	if (FLevelState* LevelState = LevelLoadedMap.Find(PackageName))
-	{
-		// Ensure LoadedAssets equals TotalAssets for accurate 100% reporting
-		LevelState->LoadedAssets = LevelState->TotalAssets;
-
-		// Broadcast final progress and loaded events
-		OnLevelLoadProgressLPT.Broadcast(LevelState->LevelSoftPtr, LevelState->LevelName, PackageName, 1.f);
-
-		if (bIsStreamingLevel)
+		if (PartitioneValue.Equals(TEXT("1")))
 		{
-			// Load Level Instance
-			bool bOutSuccess = false;
-			const FString OptionalLevelNameOverride = TEXT("");
-
-			ULevelStreamingDynamic* StreamingLevel = ULevelStreamingDynamic::LoadLevelInstanceBySoftObjectPtr(
-				this,
-				LevelState->LevelSoftPtr,
-				LevelState->LevelInstanceState.Transform,
-				bOutSuccess,
-				OptionalLevelNameOverride,
-				LevelState->LevelInstanceState.OptionalLevelStreamingClass,
-				LevelState->LevelInstanceState.bLoadAsTempPackage
-			);
-
-			if (StreamingLevel)
-			{
-				LevelState->LevelInstanceState.LevelReference = StreamingLevel;
-				// Streaming level loading notification
-				OnInstanceLevelLoadedLPT.Broadcast(LevelState->LevelSoftPtr, LevelState->LevelName);
-			}
-		}
-		else
-		{
-			// Open Level
-			UGameplayStatics::OpenLevel(this, PackageName);
+			return true;
 		}
 	}
-}
 
-void ULevelProgressTrackerSubsytem::HandleAssetLoaded(TSharedRef<FStreamableHandle> Handle, FName PackageName)
-{
-	if (FLevelState* LevelState = LevelLoadedMap.Find(PackageName))
-	{
-		LevelState->LoadedAssets = FMath::Clamp(LevelState->LoadedAssets + 1, 0, LevelState->TotalAssets);
-		
-		// Check if there are no loaded assets, then display the loading progress
-		float Progress = LevelState->TotalAssets > 0 ? (float)LevelState->LoadedAssets / (float)LevelState->TotalAssets : 1.f;
-
-		OnLevelLoadProgressLPT.Broadcast(LevelState->LevelSoftPtr, LevelState->LevelName, PackageName, Progress);
-	}
+	return false;
 }
 
 void ULevelProgressTrackerSubsytem::OnPostLoadMapWithWorld(UWorld* LoadedWorld)
@@ -294,21 +345,46 @@ void ULevelProgressTrackerSubsytem::OnPostLoadMapWithWorld(UWorld* LoadedWorld)
 	if (LoadedWorld && LoadedWorld == GetWorld())
 	{
 		FName PackageName = FName(*LoadedWorld->GetOutermost()->GetName());
-		FLevelState* LevelState = LevelLoadedMap.Find(PackageName);
+		TSharedPtr<FLevelState> LevelState = LevelLoadedMap.FindRef(PackageName);
 
 		// Reset handler if level is not streaming
 		if (LevelState && LevelState->Handle.IsValid())
 		{
-			if (LevelState->bIsStreamingLevel == false)
+			if (LevelState->LoadMethod != ELevelLoadMethod::LevelStreaming)
 			{
 				// Releasing the resource level handler and finishing tracking him
+				LevelState->Handle->ReleaseHandle();
 				LevelState->Handle.Reset();
-
-				OnGlobalLevelLoadedLPT.Broadcast(LevelState->LevelSoftPtr, LevelState->LevelName);
-
+				// Streaming level loading notification
+				OnLevelLoadedLPT.Broadcast(LevelState->LevelSoftPtr, LevelState->LevelName);
 				// Clear memory from unnecessary data
 				LevelLoadedMap.Remove(PackageName);
 			}
+		}
+	}
+}
+
+void ULevelProgressTrackerSubsytem::OnLevelShown()
+{
+	for (TPair<FName, TSharedPtr<FLevelState>>&  Level : LevelLoadedMap)
+	{
+		TSharedPtr<FLevelState>& LevelState = Level.Value;
+
+		if (LevelState->LoadMethod == ELevelLoadMethod::LevelStreaming && LevelState->LevelInstanceState.IsLoaded == true)
+		{
+			continue;
+		}
+
+		if (LevelState && LevelState->LevelInstanceState.LevelReference && 
+				LevelState->LevelInstanceState.LevelReference->HasLoadedLevel() &&
+				LevelState->LevelInstanceState.LevelReference->GetLoadedLevel()->bIsVisible)
+		{
+			LevelState->LevelInstanceState.IsLoaded = true;
+			// Releasing the resource level handler and finishing tracking him
+			LevelState->Handle->ReleaseHandle();
+			LevelState->Handle.Reset();
+			// Streaming level loading notification
+			OnLevelLoadedLPT.Broadcast(LevelState->LevelSoftPtr, LevelState->LevelName);
 		}
 	}
 }
