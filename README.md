@@ -11,24 +11,17 @@ LPT is a plugin for Unreal Engine 5 that allows you to quickly and easily create
 ## Latest Updates
 `Experimental` `Beta`
 
-`Version 1.1.0` 
+`Version 1.1.1` 
 - Build version for Unreal Engine 5.6.0
 - Code refactoring.
-- Improved code security.
-- Performance enhancements: redundant data array processing segments were removed.
-- Increased versatility of the subsystem and improved ease of use during loading screen development.
-- Simplified level load completion delegate system—now unified.
-- The system now notifies you when the level itself is fully loaded, rather than just its assets. Streaming levels are now displayed only when they are fully ready and loaded.
-- For streaming levels, resources are now released immediately after the level is loaded, not just during unloading.
-- Automatic level type recognition: World Partition, Streaming Level, or regular.
-- Multithreaded level management support.
+- Fix for subscription removal for streaming tier after it is fully downloaded.
 
 ## What it's for
 - Tracking the progress of level asset loading.
 
 ## Features
 - Ultra-fast setup and creation of a loading screen for level transitions.
-- Automatically detects the level type.
+- Automatic level type recognition: World Partition, Streaming Level, or regular.
 - Tracks the loading progress of both regular and streaming levels.
 - Automatically scans specified levels for assets and monitors their loading progress in real time.
 - Tracks level asset loading packages and their count.

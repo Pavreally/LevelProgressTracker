@@ -90,10 +90,6 @@ void ULevelProgressTrackerSubsytem::UnloadLevelInstanceLPT(const TSoftObjectPtr<
 		}
 
 		// Unloading streaming level
-		LevelState->LevelInstanceState.LevelReference->OnLevelShown.RemoveDynamic(
-			this,
-			&ULevelProgressTrackerSubsytem::OnLevelShown
-		);
 		LevelState->LevelInstanceState.LevelReference->SetIsRequestingUnloadAndRemoval(true);
 
 		if (LevelState->Handle.IsValid())
@@ -126,10 +122,6 @@ void ULevelProgressTrackerSubsytem::UnloadAllLevelInstanceLPT()
 			if (LevelState->LevelInstanceState.LevelReference)
 			{
 				// Unloading streaming level
-				LevelState->LevelInstanceState.LevelReference->OnLevelShown.RemoveDynamic(
-					this,
-					&ULevelProgressTrackerSubsytem::OnLevelShown
-				);
 				LevelState->LevelInstanceState.LevelReference->SetIsRequestingUnloadAndRemoval(true);
 			}
 		}
@@ -380,6 +372,12 @@ void ULevelProgressTrackerSubsytem::OnLevelShown()
 				LevelState->LevelInstanceState.LevelReference->GetLoadedLevel()->bIsVisible)
 		{
 			LevelState->LevelInstanceState.IsLoaded = true;
+
+			// Remove delegate tracking for the streaming level
+			LevelState->LevelInstanceState.LevelReference->OnLevelShown.RemoveDynamic(
+				this,
+				&ULevelProgressTrackerSubsytem::OnLevelShown
+			);
 			// Releasing the resource level handler and finishing tracking him
 			LevelState->Handle->ReleaseHandle();
 			LevelState->Handle.Reset();
