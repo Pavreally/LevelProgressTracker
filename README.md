@@ -11,10 +11,13 @@ LPT is a plugin for Unreal Engine 5 that allows you to quickly and easily create
 ## Latest Updates
 `Experimental` `Beta`
 
-`Version 1.1.1` 
+`Version 1.2.0` 
+- Global update.
 - Build version for Unreal Engine 5.6.0
-- Code refactoring.
-- Fix for subscription removal for streaming tier after it is fully downloaded.
+- Code refactoring and decomposition.
+- Improved code security and fixed critical errors in extreme situations (e.g., when loading and managing many embedded levels, as well as during critical subsystem shutdown).
+- Added the ability to enable and disable resource preloading for both level-loading methods.
+- New functions added: `CreateLoadingScreenLPT` and `RemoveLoadingScreenLPT`. These are special Blueprint-supported functions that allow creating a loading screen based on <b>Slate</b> and <b>UMG</b>. The target UMG is loaded via `FStreamableManager` and added as a child directly into Slate, which enables the widget to remain visible even when the level is opened using OpenLevel. (Note: it is recommended to manage the Slate widget through the Game Instance.)
 
 ## What it's for
 - Tracking the progress of level asset loading.
@@ -24,8 +27,10 @@ LPT is a plugin for Unreal Engine 5 that allows you to quickly and easily create
 - Automatic level type recognition: World Partition, Streaming Level, or regular.
 - Tracks the loading progress of both regular and streaming levels.
 - Automatically scans specified levels for assets and monitors their loading progress in real time.
+- Optional resource loading. It can be disabled, but in that case, progress tracking for resource loading will not work. However, delegates for full level loading will still function.
 - Tracks level asset loading packages and their count.
 - The "White List Dir" parameter in the level loading function is designed to selectively load only specific assets. This can be useful when working with a World Partition level containing a large number of placed assets. Moreover, you don’t need to specify the full path to the assets—just a keyword that may be present in a soft reference pointing to an asset collection is enough. If you want to include all level assets, simply leave this parameter unconnected (or empty, if using C++).
+- Built-in functions for loading screens — simply add your UMG widget, and it will function as a Slate widget. This means that your specified UMG widget will not be forcibly closed during a level transition.
 
 ## Install
 
