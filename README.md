@@ -18,7 +18,7 @@ LPT is a plugin for Unreal Engine 5 that allows you to quickly and easily create
 - Improved code security and fixed critical errors in extreme situations (e.g., when loading and managing many embedded levels, as well as during critical subsystem shutdown).
 - Improved safety when working in PIE mode.
 - Added the ability to enable and disable resource preloading for both level-loading methods.
-- New functions added: `CreateSlateWidgetLPT` and `RemoveSlateWidgetLPT`. These are special Blueprint-supported functions that allow creating a loading screen based on <b>Slate</b> and <b>UMG</b>. The target UMG is loaded via `FStreamableManager` and added as a child directly into Slate, which enables the widget to remain visible even when the level is opened using OpenLevel. (Note: it is recommended to manage the Slate widget through the Game Instance.)
+- New functions added: `CreateSlateWidgetLPT` and `RemoveSlateWidgetLPT`. These are special Blueprint-supported functions that allow creating a loading screen based on <b>Slate</b> and <b>UMG</b>. The target UMG is added as a child directly into Slate, which enables the widget to remain visible even when the level is opened using OpenLevel.
 - `NEW` Added the `CheckingPIE` function, which helps determine whether the game is running in the editor (PIE) or in standalone mode.
 
 ## What it's for
