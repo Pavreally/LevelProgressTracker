@@ -4,18 +4,17 @@
 
 #include "Widgets/SCompoundWidget.h"
 #include "Widgets/DeclarativeSyntaxSupport.h"
-#include "UObject/SoftObjectPtr.h"
+
 
 class UUserWidget;
 
 /**
  * Slate wrapper widget that hosts a UMG widget inside a Slate container.
  */
-class SLoadingWidgetWrapLPT : public SCompoundWidget
+class SWidgetWrapLPT : public SCompoundWidget
 {
 public:
-	SLATE_BEGIN_ARGS(SLoadingWidgetWrapLPT) {}
-		SLATE_ARGUMENT(TSoftClassPtr<UUserWidget>, UMGWidgetClass)
+	SLATE_BEGIN_ARGS(SWidgetWrapLPT) {}
 	SLATE_END_ARGS()
 
 	void Construct(const FArguments& InArgs);
@@ -24,7 +23,7 @@ public:
 	 * Loading UMG into adding it to the Slate widget's child container.
 	 * @param WidgetClass Reference to UMG widget.
 	 */
-	void LoadEmbeddedUWidgetLPT(TSoftClassPtr<UUserWidget>& WidgetClass);
+	void LoadEmbeddedUWidgetLPT(TSubclassOf<UUserWidget> UserWidget);
 
 	/**
 	 * Removes the widget from the viewport and resets the link.

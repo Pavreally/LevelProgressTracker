@@ -5,7 +5,7 @@
 #include "Engine/World.h"
 #include "Engine/GameViewportClient.h"
 #include "Engine/StreamableManager.h"
-#include "SLoadingWidgetWrapLPT.h"
+#include "SWidgetWrapLPT.h"
 
 
 #pragma region SUBSYSTEM
@@ -28,7 +28,7 @@ void ULevelProgressTrackerSubsytem::Deinitialize()
 	OnLevelLoadProgressLPT.Clear();
 	OnLevelLoadedLPT.Clear();
 
-	RemoveLoadingScreenLPT();
+	RemoveSlateWidgetLPT();
 	UnloadAllLevelInstanceLPT();
 
 	Super::Deinitialize();
@@ -40,9 +40,10 @@ void ULevelProgressTrackerSubsytem::OnPostLoadMapWithWorld(UWorld* LoadedWorld)
 {
 	if (LoadedWorld && LoadedWorld == GetWorld())
 	{
-		FName PackageName = FName(*LoadedWorld->GetOutermost()->GetName());
+		FString OriginalPackageName = LoadedWorld->GetOutermost()->GetName();
+		// Defining the method for forming the package name path
+		FName PackageName = CheckingPIE() ? FName(*UWorld::RemovePIEPrefix(OriginalPackageName)) : FName(*OriginalPackageName);
 		TSharedPtr<FLevelState> LevelState = LevelLoadedMap.FindRef(PackageName);
-
 		// Reset handler if level is not streaming
 		if (LevelState && LevelState->LoadMethod != ELevelLoadMethod::LevelStreaming)
 		{
@@ -60,26 +61,33 @@ void ULevelProgressTrackerSubsytem::OnPostLoadMapWithWorld(UWorld* LoadedWorld)
 	}
 }
 
-void ULevelProgressTrackerSubsytem::CreateLoadingScreenLPT(TSoftClassPtr<UUserWidget> WidgetClass, int32 ZOrder)
+void ULevelProgressTrackerSubsytem::CreateSlateWidgetLPT(TSubclassOf<UUserWidget> UserWidgetClass, int32 ZOrder)
 {
-	SLoadingWidgetWrap = SNew(SLoadingWidgetWrapLPT);
+	SWidgetWrap = SNew(SWidgetWrapLPT);
 	// Add Slate widget to viewort
 	if (GEngine)
 	{
-		GEngine->GameViewport->AddViewportWidgetContent(SLoadingWidgetWrap.ToSharedRef(), ZOrder);
+		GEngine->GameViewport->AddViewportWidgetContent(SWidgetWrap.ToSharedRef(), ZOrder);
 	}
 	// Add UMG to Slate widget
-	if (SLoadingWidgetWrap.IsValid())
+	if (SWidgetWrap.IsValid())
 	{
-		SLoadingWidgetWrap->LoadEmbeddedUWidgetLPT(WidgetClass);
+		SWidgetWrap->LoadEmbeddedUWidgetLPT(UserWidgetClass);
 	}
 }
 
-void ULevelProgressTrackerSubsytem::RemoveLoadingScreenLPT()
+void ULevelProgressTrackerSubsytem::RemoveSlateWidgetLPT()
 {
-	if (SLoadingWidgetWrap.IsValid())
+	if (SWidgetWrap.IsValid())
 	{
-		SLoadingWidgetWrap->UnloadSWidgetLPT();
-		SLoadingWidgetWrap.Reset();
+		SWidgetWrap->UnloadSWidgetLPT();
+		SWidgetWrap.Reset();
 	}
+}
+
+bool ULevelProgressTrackerSubsytem::CheckingPIE()
+{
+	UWorld* World = GetWorld();
+	
+	return World && World->IsPlayInEditor();
 }

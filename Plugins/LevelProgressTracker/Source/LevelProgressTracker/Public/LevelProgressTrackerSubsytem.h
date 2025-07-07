@@ -32,7 +32,7 @@
 
 struct FStreamableHandle;
 class IAssetRegistry;
-class SLoadingWidgetWrapLPT;
+class SWidgetWrapLPT;
 
 UENUM()
 enum class ELevelLoadMethod : uint8
@@ -166,15 +166,19 @@ public:
 
 	/**
 	 * Creates a Slate widget as a wrapper for the target UMG widget.
-	 * @param WidgetClass Targeted UMG widget.
+	 * @param UserWidgetClass A target widget of type UMG that will be embedded into the parent Slate widget.
 	 * @param ZOrder Widget display layer order.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "LPT Subsystem")
-	void CreateLoadingScreenLPT(TSoftClassPtr<UUserWidget> WidgetClass, int32 ZOrder);
+	void CreateSlateWidgetLPT(TSubclassOf<UUserWidget> UserWidgetClass, int32 ZOrder);
 
 	// Remove Slate widget
 	UFUNCTION(BlueprintCallable, Category = "LPT Subsystem")
-	void RemoveLoadingScreenLPT();
+	void RemoveSlateWidgetLPT();
+
+	// Returns true if the launch took place in the editor or false if the launch was not from the editor.
+	UFUNCTION(BlueprintPure, Category = "LPT Subsystem")
+	bool CheckingPIE();
 
 protected:
 	// Determining the level type (World Partition).
@@ -196,7 +200,7 @@ private:
 	TMap<FName, TSharedPtr<FLevelState>> LevelLoadedMap;
 
 	// Storage for a Slate type widget. Required for the optional loading screen to work.
-	TSharedPtr<SLoadingWidgetWrapLPT> SLoadingWidgetWrap;
+	TSharedPtr<SWidgetWrapLPT> SWidgetWrap;
 
 	/**
 	 * Scans the selected level and, based on the received data, asynchronously loads all found assets and resources into memory.
