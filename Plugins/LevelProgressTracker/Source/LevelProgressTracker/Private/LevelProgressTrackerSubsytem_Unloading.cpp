@@ -51,14 +51,18 @@ void ULevelProgressTrackerSubsytem::UnloadAllLevelInstanceLPT()
 		{
 			if (LevelState->Handle.IsValid())
 			{
+				LevelState->Handle->CancelHandle();
 				LevelState->Handle->ReleaseHandle();
 				LevelState->Handle.Reset();
 			}
 
 			if (LevelState->LevelInstanceState.LevelReference)
 			{
+				ULevelStreamingDynamic* StreamingLevel = LevelState->LevelInstanceState.LevelReference;
+				StreamingLevel->SetShouldBeVisible(false);
+				StreamingLevel->SetShouldBeLoaded(false);
 				// Unloading streaming level
-				LevelState->LevelInstanceState.LevelReference->SetIsRequestingUnloadAndRemoval(true);
+				StreamingLevel->SetIsRequestingUnloadAndRemoval(true);
 			}
 		}
 	}

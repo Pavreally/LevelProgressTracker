@@ -28,7 +28,10 @@ void ULevelProgressTrackerSubsytem::Deinitialize()
 	OnLevelLoadProgressLPT.Clear();
 	OnLevelLoadedLPT.Clear();
 
+	// Clearing widgets
 	RemoveSlateWidgetLPT();
+
+	// Clearing resources
 	UnloadAllLevelInstanceLPT();
 
 	Super::Deinitialize();
