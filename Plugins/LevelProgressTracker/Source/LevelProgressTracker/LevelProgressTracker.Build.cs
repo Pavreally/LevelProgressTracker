@@ -26,6 +26,7 @@ public class LevelProgressTracker : ModuleRules
 			new string[]
 			{
 				"Core",
+				"DeveloperSettings",
 				// ... add other public dependencies that you statically link with here ...
 			}
 			);
@@ -38,7 +39,6 @@ public class LevelProgressTracker : ModuleRules
 				"Engine",
 				"Slate",
 				"SlateCore",
-				"AssetRegistry",
 				"UMG",
 				// ... add private dependencies that you statically link with here ...	
 			}

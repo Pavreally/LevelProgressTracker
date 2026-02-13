@@ -5,9 +5,9 @@
  * enabling real-time monitoring of the percentage of loading progress, the current number of loaded 
  * assets, the total number of assets, and the level name.
  * 
- * The core idea of the subsystem is to automatically scan the target level and retrieve a list of its assets, 
- * then preload all discovered resources before the level itself is loaded. This means that when a new level
- * is opened, only its shell is loaded, while all its resources are already present in memory.
+ * Runtime preloading uses a precomputed database of soft object paths generated in the editor.
+ * Before opening a level, this subsystem preloads the listed resources, so the level shell can
+ * open with most assets already resident in memory.
  * 
  * The subsystem supports two loading modes: standard and streaming (embedded). An embedded streaming
  * level refers to a target level that is dynamically loaded in real time into the currently active main game level.
@@ -27,12 +27,13 @@
 #include "CoreMinimal.h"
 #include "Subsystems/GameInstanceSubsystem.h"
 #include "Engine/LevelStreamingDynamic.h"
+#include "UObject/SoftObjectPath.h"
 
 #include "LevelProgressTrackerSubsytem.generated.h"
 
 struct FStreamableHandle;
-class IAssetRegistry;
 class SWidgetWrapLPT;
+class ULevelPreloadDatabase;
 
 UENUM()
 enum class ELevelLoadMethod : uint8
@@ -102,6 +103,8 @@ class LEVELPROGRESSTRACKER_API ULevelProgressTrackerSubsytem : public UGameInsta
 	GENERATED_BODY()
 
 public:
+	ULevelProgressTrackerSubsytem();
+
 	//~USubsystem
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void Deinitialize() override;
@@ -123,26 +126,23 @@ public:
 	/**
 	 * A function that opens a new level. Similar to the standard 'OpenLevel' function.
 	 * @param LevelSoftPtr Soft link to target level.
-	 * @param WhiteListDir A list of keywords used to specify paths to directories containing the necessary resources for the level. Only these will be processed and loaded. (Note: the full path does not need to be specified. For example, "/Game/" will match any path that contains this sequence.)
 	 * @param PreloadingResources Before opening a level, its resources are automatically loaded. If false, then the calculation of loaded assets and progress does not work.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "LPT Subsystem", meta = (AutoCreateRefTerm = "WhiteListDir"))
-	void OpenLevelLPT(const TSoftObjectPtr<UWorld> LevelSoftPtr, TArray<FName> WhiteListDir, bool PreloadingResources = true);
+	UFUNCTION(BlueprintCallable, Category = "LPT Subsystem")
+	void OpenLevelLPT(const TSoftObjectPtr<UWorld> LevelSoftPtr, bool PreloadingResources = true);
 
 	/**
 	 * Function that causes an asynchronous loading of an embedded level into the current game level. 
 	 * Similar to the standard 'LoadLevelInstanceBySoftObjectPtr' function.
 	 * @param LevelSoftPtr Soft link to target level.
-	 * @param WhiteListDir A list of keywords used to specify paths to directories containing the necessary resources for the level. Only these will be processed and loaded. (Note: the full path does not need to be specified. For example, "/Game/" will match any path that contains this sequence.)
 	 * @param Transform Position and size of the game level.
 	 * @param OptionalLevelStreamingClass Allows you to specify a custom class instead of the standard one.
 	 * @param bLoadAsTempPackage If this is true, the level is loaded as a temporary package that is not saved to disk.
 	 * @param PreloadingResources Before opening a level, its resources are automatically loaded. If False, then the calculation of loaded assets and progress does not work.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "LPT Subsystem", meta = (AutoCreateRefTerm = "WhiteListDir"))
+	UFUNCTION(BlueprintCallable, Category = "LPT Subsystem")
 	void LoadLevelInstanceLPT(
 		TSoftObjectPtr<UWorld> LevelSoftPtr,
-		TArray<FName> WhiteListDir,
 		const FTransform Transform,
 		TSubclassOf<ULevelStreamingDynamic> OptionalLevelStreamingClass = nullptr,
 		bool bLoadAsTempPackage = false,
@@ -180,18 +180,6 @@ public:
 	UFUNCTION(BlueprintPure, Category = "LPT Subsystem")
 	bool CheckingPIE();
 
-protected:
-	// Determining the level type (World Partition).
-	bool CheckWorldPartition(const TSoftObjectPtr<UWorld>& LevelSoftPtr, IAssetRegistry& Registry);
-
-	/**
-	 * Checks the whitelist and filters the data if it is in it.
-	 * @param WhiteListDir Whitelist containing directories of files allowed to be loaded before the level is opened.
-	 * @param Dependencies Contains the names of all package dependencies.
-	 * @param Paths Contains links to assets filtered by WhiteListDir.
-	 */
-	void GetFilteredWhiteList(TArray<FName>& WhiteListDir, TArray<FName>& Dependencies, TArray<FSoftObjectPath> &Paths);
-
 private:
 	/**
 	 * The main data storage of the LPT subsystem. It stores information about the level and a reference to resources, 
@@ -202,10 +190,13 @@ private:
 	// Storage for a Slate type widget. Required for the optional loading screen to work.
 	TSharedPtr<SWidgetWrapLPT> SWidgetWrap;
 
+	// Reference to the project asset that stores precomputed level dependencies.
+	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category = "LPT Subsystem", meta = (AllowPrivateAccess = "true", ToolTip = "Database generated in editor with assets that should be preloaded for each level."))
+	TSoftObjectPtr<ULevelPreloadDatabase> PreloadDatabaseAsset;
+
 	/**
-	 * Scans the selected level and, based on the received data, asynchronously loads all found assets and resources into memory.
+	 * Starts async preloading by reading the entry for the level from preload database.
 	 * @param LevelSoftPtr Soft link to target level.
-	 * @param WhiteListDir A list of keywords used to specify paths to directories containing the necessary resources for the level. Only these will be processed and loaded. (Note: the full path does not need to be specified. For example, "/Game/" will match any path that contains this sequence.)
 	 * @param PreloadingResources Before opening a level, its resources are automatically loaded. If False, then the calculation of loaded assets and progress does not work.
 	 * @param bIsStreamingLevel Will the level be loaded via streaming.
 	 * @param LevelInstanceState If the level is streaming, then parameters for function 'LoadLevelInstanceBySoftObjectPtr()' are passed to it.
@@ -213,7 +204,6 @@ private:
 	UFUNCTION()
 	void AsyncLoadAssetsLPT(
 		const TSoftObjectPtr<UWorld> LevelSoftPtr,
-		TArray<FName>& WhiteListDir,
 		bool PreloadingResources,
 		bool bIsStreamingLevel = false,
 		FLevelInstanceState LevelInstanceState = FLevelInstanceState());
@@ -231,14 +221,13 @@ private:
 	void StartLevelLPT(FName PackagePath, bool bIsStreamingLevel, TSharedRef<FLevelState> LevelState);
 
 	/**
-	 * Scanning target level data for resource content and loading it
-	 * @param Registry Reference to IAssetRegistry to get package dependencies.
+	 * Loads precomputed asset paths for the target level from preload database and starts async loading.
 	 * @param PackagePath The name of the level package (FName) for which we are looking for resources.
-	 * @param WhiteListDir A list of keywords used to specify paths to directories containing the necessary resources for the level. Only these will be processed and loaded. (Note: the full path does not need to be specified. For example, "/Game/" will match any path that contains this sequence.)
+	 * @param LevelSoftPtr Soft pointer to level used to resolve corresponding preload entry.
 	 * @param LevelState A shared FLevelState structure that stores progress, pointers, and streaming parameters.
 	 * @param bIsStreamingLevel Will the level be loaded via streaming.
 	 */
-	void StartPreloadingResources(IAssetRegistry& Registry, FName& PackagePath, TArray<FName>& WhiteListDir, TSharedRef<FLevelState>& LevelState, bool& bIsStreamingLevel);
+	void StartPreloadingResources(FName PackagePath, const TSoftObjectPtr<UWorld>& LevelSoftPtr, TSharedRef<FLevelState>& LevelState, bool bIsStreamingLevel);
 
 	// Call after loading the streaming level
 	UFUNCTION()
