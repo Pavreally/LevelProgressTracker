@@ -1154,7 +1154,7 @@ void FLevelProgressTrackerEditorModule::RebuildLevelDependencies(UWorld* SavedWo
 
 	if (bWasEntryAdded)
 	{
-		Settings->BuildGlobalDefaultRules(LevelEntry->Rules);
+		LevelEntry->Rules = FLPTLevelRules();
 		LevelEntry->Rules.bRulesInitializedFromGlobalDefaults = false;
 		LevelEntry->bRulesInitializedFromGlobalDefaults = false;
 	}
@@ -1561,9 +1561,9 @@ void FLevelProgressTrackerEditorModule::HandleOpenLevelRulesEditorRequested(ULev
 			return;
 		}
 
-		// Auto-create per-level rules and open the full rules editor immediately.
-		// Global defaults remain user-editable through the first rule toggle in the details panel.
-		EffectiveSettings->BuildGlobalDefaultRules(Entry->Rules);
+		// Auto-create an empty per-level rules entry and open the full rules editor immediately.
+		// Global defaults can be enabled by the user via "Rules Initialized from Global Defaults".
+		Entry->Rules = FLPTLevelRules();
 		Entry->Rules.bRulesInitializedFromGlobalDefaults = false;
 		Entry->bRulesInitializedFromGlobalDefaults = false;
 
