@@ -23,6 +23,11 @@ public class LevelProgressTrackerEditor : ModuleRules
 				"Engine",
 				"UnrealEd",
 				"AssetRegistry",
+				"Slate",
+				"SlateCore",
+				"PropertyEditor",
+				"Projects",
+				"ToolMenus",
 			}
 		);
 	}

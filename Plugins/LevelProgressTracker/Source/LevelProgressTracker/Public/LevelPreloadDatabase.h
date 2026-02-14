@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Engine/DataAsset.h"
+#include "LevelProgressTrackerSettings.h"
 
 #include "LevelPreloadDatabase.generated.h"
 
@@ -25,7 +26,15 @@ public:
 
 	/* Assets that will be preloaded before opening the level. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "LPT")
-	TArray<TSoftObjectPtr<UObject>> Assets;
+	TArray<FSoftObjectPath> Assets;
+
+	/* Rules used when generating preload assets for this level. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "LPT")
+	FLPTLevelRules Rules;
+
+	/* Indicates whether Rules were initialized from global defaults when this entry was first created. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "LPT")
+	bool bRulesInitializedFromGlobalDefaults = false;
 };
 
 UCLASS(BlueprintType)
@@ -37,6 +46,15 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "LPT")
 	TArray<FLevelPreloadEntry> Levels;
 
-	const FLevelPreloadEntry* FindEntry(const TSoftObjectPtr<UWorld>& Level) const;
-	void UpdateEntry(const TSoftObjectPtr<UWorld>& Level, const TArray<FSoftObjectPath>& AssetPaths);
+	/** Finds a level entry by level soft pointer. Returns nullptr when no entry exists. */
+	const FLevelPreloadEntry* FindEntryByLevel(const TSoftObjectPtr<UWorld>& Level) const;
+
+	/** Finds a mutable level entry by level soft pointer. Returns nullptr when no entry exists. */
+	FLevelPreloadEntry* FindEntryByLevel(const TSoftObjectPtr<UWorld>& Level);
+
+	/** Finds existing entry for level or creates one. Never allows duplicate entries for a level. */
+	FLevelPreloadEntry* FindOrAddEntryByLevel(const TSoftObjectPtr<UWorld>& Level, bool& bWasAdded);
+
+	/** Updates level entry assets with deduplication and refreshes generation timestamp. */
+	bool UpdateEntryAssetsByLevel(const TSoftObjectPtr<UWorld>& Level, const TArray<FSoftObjectPath>& AssetPaths);
 };

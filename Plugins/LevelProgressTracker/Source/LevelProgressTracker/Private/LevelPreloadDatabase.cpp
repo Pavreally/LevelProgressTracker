@@ -3,9 +3,13 @@
 #include "LevelPreloadDatabase.h"
 
 
-const FLevelPreloadEntry* ULevelPreloadDatabase::FindEntry(const TSoftObjectPtr<UWorld>& Level) const
+const FLevelPreloadEntry* ULevelPreloadDatabase::FindEntryByLevel(const TSoftObjectPtr<UWorld>& Level) const
 {
 	const FSoftObjectPath LevelPath = Level.ToSoftObjectPath();
+	if (!LevelPath.IsValid())
+	{
+		return nullptr;
+	}
 
 	for (const FLevelPreloadEntry& Entry : Levels)
 	{
@@ -18,36 +22,87 @@ const FLevelPreloadEntry* ULevelPreloadDatabase::FindEntry(const TSoftObjectPtr<
 	return nullptr;
 }
 
-void ULevelPreloadDatabase::UpdateEntry(const TSoftObjectPtr<UWorld>& Level, const TArray<FSoftObjectPath>& AssetPaths)
+FLevelPreloadEntry* ULevelPreloadDatabase::FindEntryByLevel(const TSoftObjectPtr<UWorld>& Level)
 {
 	const FSoftObjectPath LevelPath = Level.ToSoftObjectPath();
-
 	if (!LevelPath.IsValid())
 	{
-		return;
+		return nullptr;
 	}
 
-	int32 EntryIndex = INDEX_NONE;
-
-	for (int32 Index = 0; Index < Levels.Num(); ++Index)
+	for (FLevelPreloadEntry& Entry : Levels)
 	{
-		if (Levels[Index].Level.ToSoftObjectPath() == LevelPath)
+		if (Entry.Level.ToSoftObjectPath() == LevelPath)
 		{
-			EntryIndex = Index;
-			break;
+			return &Entry;
 		}
 	}
 
-	if (EntryIndex == INDEX_NONE)
+	return nullptr;
+}
+
+FLevelPreloadEntry* ULevelPreloadDatabase::FindOrAddEntryByLevel(const TSoftObjectPtr<UWorld>& Level, bool& bWasAdded)
+{
+	bWasAdded = false;
+
+	const FSoftObjectPath LevelPath = Level.ToSoftObjectPath();
+	if (!LevelPath.IsValid())
 	{
-		EntryIndex = Levels.AddDefaulted();
+		return nullptr;
 	}
 
-	Levels[EntryIndex].Level = Level;
-	Levels[EntryIndex].GenerationTimestamp = FDateTime::UtcNow();
+	int32 PrimaryIndex = INDEX_NONE;
+	TArray<int32> DuplicateIndices;
+
+	for (int32 Index = 0; Index < Levels.Num(); ++Index)
+	{
+		if (Levels[Index].Level.ToSoftObjectPath() != LevelPath)
+		{
+			continue;
+		}
+
+		if (PrimaryIndex == INDEX_NONE)
+		{
+			PrimaryIndex = Index;
+		}
+		else
+		{
+			DuplicateIndices.Add(Index);
+		}
+	}
+
+	if (PrimaryIndex != INDEX_NONE)
+	{
+		for (int32 DupArrayIndex = DuplicateIndices.Num() - 1; DupArrayIndex >= 0; --DupArrayIndex)
+		{
+			Levels.RemoveAt(DuplicateIndices[DupArrayIndex]);
+		}
+
+		return &Levels[PrimaryIndex];
+	}
+
+	const int32 NewEntryIndex = Levels.AddDefaulted();
+	FLevelPreloadEntry& NewEntry = Levels[NewEntryIndex];
+	NewEntry.Level = Level;
+	bWasAdded = true;
+
+	return &NewEntry;
+}
+
+bool ULevelPreloadDatabase::UpdateEntryAssetsByLevel(const TSoftObjectPtr<UWorld>& Level, const TArray<FSoftObjectPath>& AssetPaths)
+{
+	bool bWasAdded = false;
+	FLevelPreloadEntry* Entry = FindOrAddEntryByLevel(Level, bWasAdded);
+	if (!Entry)
+	{
+		return false;
+	}
+
+	Entry->Level = Level;
+	Entry->GenerationTimestamp = FDateTime::UtcNow();
 
 	TSet<FSoftObjectPath> UniquePaths;
-	Levels[EntryIndex].Assets.Reset(AssetPaths.Num());
+	Entry->Assets.Reset(AssetPaths.Num());
 
 	for (const FSoftObjectPath& AssetPath : AssetPaths)
 	{
@@ -57,6 +112,8 @@ void ULevelPreloadDatabase::UpdateEntry(const TSoftObjectPtr<UWorld>& Level, con
 		}
 
 		UniquePaths.Add(AssetPath);
-		Levels[EntryIndex].Assets.Add(TSoftObjectPtr<UObject>(AssetPath));
+		Entry->Assets.Add(AssetPath);
 	}
+
+	return true;
 }

@@ -18,7 +18,7 @@ class LEVELPROGRESSTRACKER_API ULevelPreloadAssetFilter : public UObject
 
 public:
 	/**
-	 * Filters input asset paths using project settings rules and mode.
+	 * Filters input asset paths using provided per-level rules and mode.
 	 * In exclusion mode matching assets are removed.
 	 * In inclusion mode only matching assets are kept.
 	 */

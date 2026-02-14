@@ -2,6 +2,8 @@
 
 #include "LevelProgressTrackerSettings.h"
 #include "Misc/PackageName.h"
+#include "Modules/ModuleInterface.h"
+#include "Modules/ModuleManager.h"
 
 
 namespace LevelProgressTrackerSettingsPrivate
@@ -9,6 +11,10 @@ namespace LevelProgressTrackerSettingsPrivate
 	static const FString DefaultDatabaseFolder = TEXT("/Game/_DataLPT");
 	static const FString DatabaseAssetName = TEXT("LevelPreloadDatabase");
 }
+
+#if WITH_EDITOR
+ULevelProgressTrackerSettings::FOnOpenLevelRulesEditorRequested ULevelProgressTrackerSettings::OnOpenLevelRulesEditorRequested;
+#endif
 
 ULevelProgressTrackerSettings::ULevelProgressTrackerSettings()
 {
@@ -86,48 +92,30 @@ bool ULevelProgressTrackerSettings::ResolveDatabaseAssetPaths(FString& OutDataba
 	return OutDatabaseObjectPath.IsValid();
 }
 
-const FLPTLevelRules* ULevelProgressTrackerSettings::FindLevelRules(const TSoftObjectPtr<UWorld>& Level) const
+void ULevelProgressTrackerSettings::BuildGlobalDefaultRules(FLPTLevelRules& OutRules) const
 {
-	const FSoftObjectPath LevelPath = Level.ToSoftObjectPath();
-
-	if (!LevelPath.IsValid())
-	{
-		return nullptr;
-	}
-
-	for (const FLPTLevelRules& Rules : LevelRules)
-	{
-		if (Rules.TargetLevel.ToSoftObjectPath() == LevelPath)
-		{
-			return &Rules;
-		}
-	}
-
-	return nullptr;
+	OutRules.bUseExclusionMode = bUseExclusionMode;
+	OutRules.AssetRules = AssetRules;
+	OutRules.FolderRules = FolderRules;
+	OutRules.bAllowWorldPartitionAutoScan = bAllowWorldPartitionAutoScan;
+	OutRules.WorldPartitionRegions = WorldPartitionRegions;
+	OutRules.WorldPartitionCells = WorldPartitionCells;
 }
 
-FLPTLevelRules* ULevelProgressTrackerSettings::FindOrAddLevelRules(const TSoftObjectPtr<UWorld>& Level, bool& bWasAdded)
+void ULevelProgressTrackerSettings::OpenLevelRulesEditorForCurrentLevel()
 {
-	bWasAdded = false;
-
-	const FSoftObjectPath LevelPath = Level.ToSoftObjectPath();
-	if (!LevelPath.IsValid())
+#if WITH_EDITOR
+	if (!OnOpenLevelRulesEditorRequested.IsBound())
 	{
-		return nullptr;
+		FModuleManager::Get().LoadModulePtr<IModuleInterface>(TEXT("LevelProgressTrackerEditor"));
 	}
 
-	for (FLPTLevelRules& Rules : LevelRules)
+	if (!OnOpenLevelRulesEditorRequested.IsBound())
 	{
-		if (Rules.TargetLevel.ToSoftObjectPath() == LevelPath)
-		{
-			return &Rules;
-		}
+		UE_LOG(LogTemp, Warning, TEXT("LPT Editor: Failed to open level rules editor because LevelProgressTrackerEditor module is not available."));
+		return;
 	}
 
-	const int32 NewIndex = LevelRules.AddDefaulted();
-	FLPTLevelRules& NewRules = LevelRules[NewIndex];
-	NewRules.TargetLevel = Level;
-	bWasAdded = true;
-
-	return &NewRules;
+	OnOpenLevelRulesEditorRequested.Broadcast(this);
+#endif
 }

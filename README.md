@@ -11,10 +11,11 @@ LPT is a plugin for Unreal Engine 5 that allows you to quickly and easily create
 ## Latest Updates
 `Experimental`
 
-`Version 1.3.1`
-- Fixed a critical issue with no progress in loading assets in a packaged project.
-- Improved approach for working with World Partition levels.
-- Added a settings section in Project Settings.
+`Version 1.3.2`
+- Fixed a critical bug that caused the resource loading progress bar to not work in packaged games.
+- Improved the approach to working with World Partition levels.
+- Added a plugin global settings section in Project Settings.
+- Added a plugin preset button for the current level in the UE editor Toolbar.
 
 ## What it's for
 - Tracking the progress of level asset loading.

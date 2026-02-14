@@ -99,7 +99,7 @@ void ULevelProgressTrackerSubsytem::StartPreloadingResources(FName PackagePath, 
 		return;
 	}
 
-	const FLevelPreloadEntry* LevelEntry = PreloadDatabase->FindEntry(LevelSoftPtr);
+	const FLevelPreloadEntry* LevelEntry = PreloadDatabase->FindEntryByLevel(LevelSoftPtr);
 	if (!LevelEntry)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("LPT (StartPreloadingResources): No preload entry found for level '%s'. Falling back to level-only loading."),
@@ -117,9 +117,8 @@ void ULevelProgressTrackerSubsytem::StartPreloadingResources(FName PackagePath, 
 	TSet<FSoftObjectPath> UniquePaths;
 	Paths.Reserve(LevelEntry->Assets.Num());
 
-	for (const TSoftObjectPtr<UObject>& Asset : LevelEntry->Assets)
+	for (const FSoftObjectPath& AssetPath : LevelEntry->Assets)
 	{
-		const FSoftObjectPath AssetPath = Asset.ToSoftObjectPath();
 		if (!AssetPath.IsValid() || UniquePaths.Contains(AssetPath))
 		{
 			continue;

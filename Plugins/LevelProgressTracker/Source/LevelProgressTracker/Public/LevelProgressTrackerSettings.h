@@ -9,44 +9,37 @@
 
 #include "LevelProgressTrackerSettings.generated.h"
 
-class UWorld;
-
 /**
- * Per-level filtering and World Partition generation rules.
- * Rules are matched by TargetLevel.
+ * Filtering and World Partition generation rules used by a single level entry.
  */
 USTRUCT(BlueprintType)
 struct FLPTLevelRules
 {
 	GENERATED_BODY()
 
-	/* Target level for this rule set. */
-	UPROPERTY(EditAnywhere, Config, Category = "Level")
-	TSoftObjectPtr<UWorld> TargetLevel;
-
-	/* Exclusion mode: true means remove matching rules, false means keep only matching rules. */
-	UPROPERTY(EditAnywhere, Config, Category = "Filtering")
+	/* Exclusion mode: true removes matching assets, false keeps only matching assets. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Filtering")
 	bool bUseExclusionMode = false;
 
 	/* Asset path rules evaluated by exact long package name match. */
-	UPROPERTY(EditAnywhere, Config, Category = "Filtering")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Filtering")
 	TArray<FSoftObjectPath> AssetRules;
 
 	/* Folder rules evaluated by long package name prefix match. */
-	UPROPERTY(EditAnywhere, Config, Category = "Filtering")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Filtering")
 	TArray<FDirectoryPath> FolderRules;
 
 	/* Enables safe World Partition actor scan using only currently loaded actors. */
-	UPROPERTY(EditAnywhere, Config, Category = "World Partition")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Partition")
 	bool bAllowWorldPartitionAutoScan = false;
 
-	/* World Partition cell tokens evaluated by long package name substring match. */
-	UPROPERTY(EditAnywhere, Config, Category = "World Partition")
-	TArray<FString> WorldPartitionCells;
-
 	/* World Partition region names (Data Layer or named region) used for actor filtering. */
-	UPROPERTY(EditAnywhere, Config, Category = "World Partition")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Partition")
 	TArray<FName> WorldPartitionRegions;
+
+	/* World Partition cell tokens evaluated by long package name substring match. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Partition")
+	TArray<FString> WorldPartitionCells;
 };
 
 /**
@@ -72,11 +65,16 @@ public:
 	 */
 	bool ResolveDatabaseAssetPaths(FString& OutDatabaseFolderLongPath, FString& OutDatabasePackagePath, FSoftObjectPath& OutDatabaseObjectPath) const;
 
-	// Finds level rules by target level soft path.
-	const FLPTLevelRules* FindLevelRules(const TSoftObjectPtr<UWorld>& Level) const;
+	/** Copies global defaults into per-level rules when a new level entry is created. */
+	void BuildGlobalDefaultRules(FLPTLevelRules& OutRules) const;
 
-	// Finds existing rules or appends a new default rule for the target level.
-	FLPTLevelRules* FindOrAddLevelRules(const TSoftObjectPtr<UWorld>& Level, bool& bWasAdded);
+#if WITH_EDITOR
+	DECLARE_MULTICAST_DELEGATE_OneParam(FOnOpenLevelRulesEditorRequested, ULevelProgressTrackerSettings*);
+	static FOnOpenLevelRulesEditorRequested OnOpenLevelRulesEditorRequested;
+#endif
+
+	/** Opens the per-level rules editor for the currently opened level. */
+	void OpenLevelRulesEditorForCurrentLevel();
 
 	/* Full long package path for LevelPreloadDatabase folder. '/Game' is the project content root. */
 	UPROPERTY(EditAnywhere, Config, Category = "Database", meta = (ToolTip = "Full long package path for LevelPreloadDatabase folder. '/Game' is the project content root."))
@@ -86,7 +84,28 @@ public:
 	UPROPERTY(EditAnywhere, Config, Category = "Generation")
 	bool bAutoGenerateOnLevelSave = true;
 
-	/* Per-level rules for filtering and World Partition behavior. */
-	UPROPERTY(EditAnywhere, Config, Category = "Rules")
-	TArray<FLPTLevelRules> LevelRules;
+	/* These settings are used as default values when creating rules for a new level. They do not affect existing level entries. */
+	UPROPERTY(EditAnywhere, Config, Category = "Global Rule Defaults", meta = (ToolTip = "These settings are used as default values when creating rules for a new level. They do not affect existing level entries."))
+	bool bUseExclusionMode = false;
+
+	/* These settings are used as default values when creating rules for a new level. They do not affect existing level entries. */
+	UPROPERTY(EditAnywhere, Config, Category = "Global Rule Defaults", meta = (ToolTip = "These settings are used as default values when creating rules for a new level. They do not affect existing level entries."))
+	TArray<FSoftObjectPath> AssetRules;
+
+	/* These settings are used as default values when creating rules for a new level. They do not affect existing level entries. */
+	UPROPERTY(EditAnywhere, Config, Category = "Global Rule Defaults", meta = (ToolTip = "These settings are used as default values when creating rules for a new level. They do not affect existing level entries."))
+	TArray<FDirectoryPath> FolderRules;
+
+	/* These settings are used as default values when creating rules for a new level. They do not affect existing level entries. */
+	UPROPERTY(EditAnywhere, Config, Category = "Global Rule Defaults - WorldPartition", meta = (ToolTip = "These settings are used as default values when creating rules for a new level. They do not affect existing level entries."))
+	bool bAllowWorldPartitionAutoScan = false;
+
+	/* These settings are used as default values when creating rules for a new level. They do not affect existing level entries. */
+	UPROPERTY(EditAnywhere, Config, Category = "Global Rule Defaults - WorldPartition", meta = (ToolTip = "These settings are used as default values when creating rules for a new level. They do not affect existing level entries."))
+	TArray<FName> WorldPartitionRegions;
+
+	/* These settings are used as default values when creating rules for a new level. They do not affect existing level entries. */
+	UPROPERTY(EditAnywhere, Config, Category = "Global Rule Defaults - WorldPartition", meta = (ToolTip = "These settings are used as default values when creating rules for a new level. They do not affect existing level entries."))
+	TArray<FString> WorldPartitionCells;
+	
 };
