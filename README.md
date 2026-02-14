@@ -11,9 +11,12 @@ LPT is a plugin for Unreal Engine 5 that allows you to quickly and easily create
 ## Latest Updates
 `Experimental`
 
-`Version 1.2.2`
-- Build version for Unreal Engine 5.6.0
-- Security improvement. A fix has been implemented to cancel resource loading and prevent level launch in the event of an unexpected system shutdown.
+`Version 1.3.5`
+- Fixed a critical bug that caused the resource loading progress bar to not work in packaged games.
+- Improved the approach to working with World Partition levels.
+- Added a plugin global settings section in Project Settings.
+- Added a plugin preset button for the current level in the UE editor Toolbar.
+- Added extended recursion for asset parsing at the level and class filter.
 
 ## What it's for
 - Tracking the progress of level asset loading.
@@ -25,13 +28,12 @@ LPT is a plugin for Unreal Engine 5 that allows you to quickly and easily create
 - Automatically scans specified levels for assets and monitors their loading progress in real time.
 - Optional resource loading. It can be disabled, but in that case, progress tracking for resource loading will not work. However, delegates for full level loading will still function.
 - Tracks level asset loading packages and their count.
-- The "White List Dir" parameter in the level loading function is designed to selectively load only specific assets. This can be useful when working with a World Partition level containing a large number of placed assets. Moreover, you don’t need to specify the full path to the assets—just a keyword that may be present in a soft reference pointing to an asset collection is enough. If you want to include all level assets, simply leave this parameter unconnected (or empty, if using C++).
 - Built-in functions for loading screens — simply add your UMG widget, and it will function as a Slate widget. This means that your specified UMG widget will not be forcibly closed during a level transition.
 
 ## Install
 
 > [!NOTE]
-> Starting with Unreal Engine version 5.6, it is recommended to use the new project type based on C++. Otherwise, when creating a new Blueprint project, you may encounter the following error: "Engine modules are out of date, and cannot be compiled while the engine is running. Please build through your IDE." This issue does not occur in a pure C++ project.
+> Starting with Unreal Engine version 5.6, it is recommended to use the new project type based on C++. After copying the plugin folder, be sure to perform a full project rebuild in your C++ IDE.
 
 1. Make sure the Unreal Engine editor is closed.
 2. Move the "Plugins" folder to the root folder of your created project.
@@ -41,10 +43,7 @@ LPT is a plugin for Unreal Engine 5 that allows you to quickly and easily create
 ## How to use it?
 An interactive step-by-step tutorial on how to use LPT can be found in the file: `B_LPT_GameMode_Demo`, which is located at the path `Plugins\Level Progress Tracker Content\DemoFiles\`.
 
-![Window Manager](./_Misc/Tutorial/Tutorial_1.jpg)
-![Window Manager](./_Misc/Tutorial/Tutorial_2.jpg)
-![Window Manager](./_Misc/Tutorial/Tutorial_3.jpg)
-![Window Manager](./_Misc/Tutorial/Tutorial_4.jpg)
+<!-- ![Window Manager](./_Misc/Tutorial/Tutorial_1.jpg) -->
 
 ## (C++) Documentaion
 All sources contain self-documenting code.

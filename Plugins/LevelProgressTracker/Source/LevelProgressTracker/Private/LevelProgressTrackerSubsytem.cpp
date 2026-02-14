@@ -1,17 +1,42 @@
 // Pavel Gornostaev <https://github.com/Pavreally>
 
 #include "LevelProgressTrackerSubsytem.h"
+#include "LevelPreloadAssetFilter.h"
+#include "LevelPreloadDatabase.h"
+#include "LevelProgressTrackerSettings.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "Engine/GameViewportClient.h"
 #include "Engine/StreamableManager.h"
+#include "UObject/Package.h"
 #include "SWidgetWrapLPT.h"
 
 
 #pragma region SUBSYSTEM
+ULevelProgressTrackerSubsytem::ULevelProgressTrackerSubsytem()
+{
+}
+
 void ULevelProgressTrackerSubsytem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
+
+	const ULevelProgressTrackerSettings* Settings = GetDefault<ULevelProgressTrackerSettings>();
+
+	FString DatabasePackagePath;
+	FSoftObjectPath DatabaseObjectPath;
+
+	if (ULevelPreloadAssetFilter::ResolveDatabaseAssetPath(Settings, DatabasePackagePath, DatabaseObjectPath))
+	{
+		PreloadDatabaseAsset = TSoftObjectPtr<ULevelPreloadDatabase>(DatabaseObjectPath);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("LPT: Invalid database folder in project settings. Preload database path could not be resolved. Candidate package path: '%s'."),
+			*DatabasePackagePath
+		);
+		PreloadDatabaseAsset.Reset();
+	}
 
 	// Subscribe to be notified when the global level load is complete
 	FCoreUObjectDelegates::PostLoadMapWithWorld.AddUObject(

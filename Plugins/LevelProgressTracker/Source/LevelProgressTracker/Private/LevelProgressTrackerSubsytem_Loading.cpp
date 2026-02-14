@@ -1,14 +1,13 @@
 // Pavel Gornostaev <https://github.com/Pavreally>
 
 #include "LevelProgressTrackerSubsytem.h"
+#include "LevelPreloadDatabase.h"
 #include "Engine/StreamableManager.h"
 #include "Engine/AssetManager.h"
-#include "AssetRegistry/AssetRegistryModule.h"
-#include "AssetRegistry/IAssetRegistry.h"
 #include "Kismet/GameplayStatics.h"
 
 
-void ULevelProgressTrackerSubsytem::OpenLevelLPT(const TSoftObjectPtr<UWorld> LevelSoftPtr, TArray<FName> WhiteListDir, bool PreloadingResources)
+void ULevelProgressTrackerSubsytem::OpenLevelLPT(const TSoftObjectPtr<UWorld> LevelSoftPtr, bool PreloadingResources)
 {
 	if (LevelSoftPtr.IsNull())
 	{
@@ -18,10 +17,10 @@ void ULevelProgressTrackerSubsytem::OpenLevelLPT(const TSoftObjectPtr<UWorld> Le
 	}
 
 	// Preloads the target level's resources, waits for all resources to load, and starts the level itself.
-	AsyncLoadAssetsLPT(LevelSoftPtr, WhiteListDir, PreloadingResources);
+	AsyncLoadAssetsLPT(LevelSoftPtr, PreloadingResources);
 }
 
-void ULevelProgressTrackerSubsytem::LoadLevelInstanceLPT(TSoftObjectPtr<UWorld> LevelSoftPtr, TArray<FName> WhiteListDir, const FTransform Transform, TSubclassOf<ULevelStreamingDynamic> OptionalLevelStreamingClass, bool bLoadAsTempPackage, bool PreloadingResources)
+void ULevelProgressTrackerSubsytem::LoadLevelInstanceLPT(TSoftObjectPtr<UWorld> LevelSoftPtr, const FTransform Transform, TSubclassOf<ULevelStreamingDynamic> OptionalLevelStreamingClass, bool bLoadAsTempPackage, bool PreloadingResources)
 {
 	if (LevelSoftPtr.IsNull())
 	{
@@ -36,10 +35,10 @@ void ULevelProgressTrackerSubsytem::LoadLevelInstanceLPT(TSoftObjectPtr<UWorld> 
 	LevelInstanceState.bLoadAsTempPackage = bLoadAsTempPackage;
 
 	// Preloads the target level's resources, waits for all resources to load, and starts the level itself.
-	AsyncLoadAssetsLPT(LevelSoftPtr, WhiteListDir, PreloadingResources, true, LevelInstanceState);
+	AsyncLoadAssetsLPT(LevelSoftPtr, PreloadingResources, true, LevelInstanceState);
 }
 
-void ULevelProgressTrackerSubsytem::AsyncLoadAssetsLPT(const TSoftObjectPtr<UWorld> LevelSoftPtr, TArray<FName>& WhiteListDir, bool PreloadingResources, bool bIsStreamingLevel, FLevelInstanceState LevelInstanceState)
+void ULevelProgressTrackerSubsytem::AsyncLoadAssetsLPT(const TSoftObjectPtr<UWorld> LevelSoftPtr, bool PreloadingResources, bool bIsStreamingLevel, FLevelInstanceState LevelInstanceState)
 {
 	if (LevelSoftPtr.IsNull())
 	{
@@ -57,9 +56,6 @@ void ULevelProgressTrackerSubsytem::AsyncLoadAssetsLPT(const TSoftObjectPtr<UWor
 
 		return;
 	}
-	
-	FAssetRegistryModule& RegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
-	IAssetRegistry& Registry = RegistryModule.Get();
 
 	// Init load stat
 	TSharedRef<FLevelState> LevelState = MakeShared<FLevelState>();
@@ -69,54 +65,79 @@ void ULevelProgressTrackerSubsytem::AsyncLoadAssetsLPT(const TSoftObjectPtr<UWor
 	LevelState->LoadedAssets = 0;
 	LevelState->LevelInstanceState = LevelInstanceState;
 
-	// Determining the level type (World Partition)
-	if (!bIsStreamingLevel && CheckWorldPartition(LevelSoftPtr, Registry))
-	{
-		LevelState->LoadMethod = ELevelLoadMethod::WorldPartition;
-	}
-	else if (bIsStreamingLevel)
+	if (bIsStreamingLevel)
 	{
 		LevelState->LoadMethod = ELevelLoadMethod::LevelStreaming;
 	}
 
+	LevelLoadedMap.Add(PackagePath, LevelState);
+
 	if (PreloadingResources)
 	{
-		StartPreloadingResources(Registry, PackagePath, WhiteListDir, LevelState, bIsStreamingLevel);
+		StartPreloadingResources(PackagePath, LevelSoftPtr, LevelState, bIsStreamingLevel);
 	}
 	else
 	{
 		StartLevelLPT(PackagePath, bIsStreamingLevel, LevelState);
 	}
-
-	LevelLoadedMap.Add(PackagePath, LevelState);
 }
 
-void ULevelProgressTrackerSubsytem::StartPreloadingResources(IAssetRegistry& Registry, FName& PackagePath, TArray<FName>& WhiteListDir, TSharedRef<FLevelState>& LevelState, bool& bIsStreamingLevel)
+void ULevelProgressTrackerSubsytem::StartPreloadingResources(FName PackagePath, const TSoftObjectPtr<UWorld>& LevelSoftPtr, TSharedRef<FLevelState>& LevelState, bool bIsStreamingLevel)
 {
-	// Gather dependencies
-	TArray<FName> Dependencies;
-
-	Registry.GetDependencies(
-		PackagePath,
-		Dependencies,
-		UE::AssetRegistry::EDependencyCategory::Package,
-		UE::AssetRegistry::FDependencyQuery()
-	);
-
-	if (Dependencies.Num() == 0)
+	ULevelPreloadDatabase* PreloadDatabase = PreloadDatabaseAsset.LoadSynchronous();
+	if (!PreloadDatabase)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("LPT (AsyncLoadAssetsLPT): No assets found to load for level '%s'."), *PackagePath.ToString());
+		UE_LOG(LogTemp, Warning, TEXT("LPT (StartPreloadingResources): Preload database '%s' is missing. Falling back to level-only loading for '%s'."),
+			*PreloadDatabaseAsset.ToString(),
+			*PackagePath.ToString()
+		);
+
+		LevelState->TotalAssets = 1;
+		LevelState->LoadedAssets = 1;
+		OnLevelLoadProgressLPT.Broadcast(LevelState->LevelSoftPtr, LevelState->LevelName, 1.f, LevelState->LoadedAssets, LevelState->TotalAssets);
 		StartLevelLPT(PackagePath, bIsStreamingLevel, LevelState);
-		
 		return;
 	}
 
-	// Softlink conversion and optional whitelist filtering
+	const FLevelPreloadEntry* LevelEntry = PreloadDatabase->FindEntryByLevel(LevelSoftPtr);
+	if (!LevelEntry)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("LPT (StartPreloadingResources): No preload entry found for level '%s'. Falling back to level-only loading."),
+			*PackagePath.ToString()
+		);
+
+		LevelState->TotalAssets = 1;
+		LevelState->LoadedAssets = 1;
+		OnLevelLoadProgressLPT.Broadcast(LevelState->LevelSoftPtr, LevelState->LevelName, 1.f, LevelState->LoadedAssets, LevelState->TotalAssets);
+		StartLevelLPT(PackagePath, bIsStreamingLevel, LevelState);
+		return;
+	}
+
 	TArray<FSoftObjectPath> Paths;
-	GetFilteredWhiteList(WhiteListDir, Dependencies, Paths);
+	TSet<FSoftObjectPath> UniquePaths;
+	Paths.Reserve(LevelEntry->Assets.Num());
+
+	for (const FSoftObjectPath& AssetPath : LevelEntry->Assets)
+	{
+		if (!AssetPath.IsValid() || UniquePaths.Contains(AssetPath))
+		{
+			continue;
+		}
+
+		UniquePaths.Add(AssetPath);
+		Paths.Add(AssetPath);
+	}
 
 	// Setup load stat
 	LevelState->TotalAssets = Paths.Num();
+	LevelState->LoadedAssets = 0;
+
+	if (Paths.IsEmpty())
+	{
+		OnLevelLoadProgressLPT.Broadcast(LevelState->LevelSoftPtr, LevelState->LevelName, 1.f, 0, 0);
+		StartLevelLPT(PackagePath, bIsStreamingLevel, LevelState);
+		return;
+	}
 
 	// Request for async resource loading
 	FStreamableManager& StreamableManager = UAssetManager::Get().GetStreamableManager();
@@ -140,6 +161,17 @@ void ULevelProgressTrackerSubsytem::StartPreloadingResources(IAssetRegistry& Reg
 			LevelState
 		));
 		LevelState->Handle = Handle;
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("LPT (StartPreloadingResources): Failed to create streamable handle for level '%s'."),
+			*PackagePath.ToString()
+		);
+
+		LevelState->TotalAssets = 1;
+		LevelState->LoadedAssets = 1;
+		OnLevelLoadProgressLPT.Broadcast(LevelState->LevelSoftPtr, LevelState->LevelName, 1.f, LevelState->LoadedAssets, LevelState->TotalAssets);
+		StartLevelLPT(PackagePath, bIsStreamingLevel, LevelState);
 	}
 }
 
