@@ -286,7 +286,7 @@ ULevelPreloadDatabase* FLevelProgressTrackerEditorModule::GetOrCreateDatabaseAss
 
 	if (!ULevelPreloadAssetFilter::ResolveDatabaseAssetPath(Settings, DatabasePackagePath, DatabaseObjectPath))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("LPT Editor: Invalid database folder in project settings. Expected a valid path under /Game."));
+		UE_LOG(LogTemp, Warning, TEXT("LPT Editor: Invalid database folder in project settings. Expected a valid long package path (for example '/Game/_DataLPT' or '/PluginName/Data')."));
 		return nullptr;
 	}
 

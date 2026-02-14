@@ -11,7 +11,7 @@ LPT is a plugin for Unreal Engine 5 that allows you to quickly and easily create
 ## Latest Updates
 `Experimental`
 
-`Version 1.3.0`
+`Version 1.3.1`
 - Fixed a critical issue with no progress in loading assets in a packaged project.
 - Improved approach for working with World Partition levels.
 - Added a settings section in Project Settings.

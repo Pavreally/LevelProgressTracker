@@ -68,7 +68,7 @@ public:
 
 	/**
 	 * Resolves validated package/object paths for preload database asset.
-	 * DatabaseFolder is interpreted as "/Game/<DatabaseFolder>".
+	 * DatabaseFolder is a full long package path (for example: "/Game/_DataLPT" or "/PluginName/Data").
 	 */
 	bool ResolveDatabaseAssetPaths(FString& OutDatabaseFolderLongPath, FString& OutDatabasePackagePath, FSoftObjectPath& OutDatabaseObjectPath) const;
 
@@ -78,8 +78,8 @@ public:
 	// Finds existing rules or appends a new default rule for the target level.
 	FLPTLevelRules* FindOrAddLevelRules(const TSoftObjectPtr<UWorld>& Level, bool& bWasAdded);
 
-	/* Folder name under /Game used to store LevelPreloadDatabase asset. */
-	UPROPERTY(EditAnywhere, Config, Category = "Database")
+	/* Full long package path for LevelPreloadDatabase folder. '/Game' is the project content root. */
+	UPROPERTY(EditAnywhere, Config, Category = "Database", meta = (ToolTip = "Full long package path for LevelPreloadDatabase folder. '/Game' is the project content root."))
 	FDirectoryPath DatabaseFolder;
 
 	/* Enables automatic database generation when a level package is saved. */

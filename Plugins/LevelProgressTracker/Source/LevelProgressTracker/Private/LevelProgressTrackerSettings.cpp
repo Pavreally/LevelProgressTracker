@@ -6,7 +6,7 @@
 
 namespace LevelProgressTrackerSettingsPrivate
 {
-	static const FString DefaultDatabaseFolder = TEXT("_DataLPT");
+	static const FString DefaultDatabaseFolder = TEXT("/Game/_DataLPT");
 	static const FString DatabaseAssetName = TEXT("LevelPreloadDatabase");
 }
 
@@ -32,23 +32,6 @@ bool ULevelProgressTrackerSettings::ResolveDatabaseAssetPaths(FString& OutDataba
 		FolderPath = LevelProgressTrackerSettingsPrivate::DefaultDatabaseFolder;
 	}
 
-	if (FolderPath.StartsWith(TEXT("/Game/")))
-	{
-		FolderPath.RightChopInline(6, EAllowShrinking::No);
-	}
-	else if (FolderPath.Equals(TEXT("/Game"), ESearchCase::IgnoreCase) || FolderPath.Equals(TEXT("Game"), ESearchCase::IgnoreCase))
-	{
-		FolderPath = LevelProgressTrackerSettingsPrivate::DefaultDatabaseFolder;
-	}
-	else if (FolderPath.StartsWith(TEXT("Game/")))
-	{
-		FolderPath.RightChopInline(5, EAllowShrinking::No);
-	}
-	else if (FolderPath.StartsWith(TEXT("/")))
-	{
-		FolderPath.RightChopInline(1, EAllowShrinking::No);
-	}
-
 	while (FolderPath.EndsWith(TEXT("/")))
 	{
 		FolderPath.LeftChopInline(1, EAllowShrinking::No);
@@ -59,7 +42,30 @@ bool ULevelProgressTrackerSettings::ResolveDatabaseAssetPaths(FString& OutDataba
 		FolderPath = LevelProgressTrackerSettingsPrivate::DefaultDatabaseFolder;
 	}
 
-	OutDatabaseFolderLongPath = FString::Printf(TEXT("/Game/%s"), *FolderPath);
+	// Keep historical behavior: plain "/Game" meant "use the default subfolder".
+	if (FolderPath.Equals(TEXT("/Game"), ESearchCase::IgnoreCase) || FolderPath.Equals(TEXT("Game"), ESearchCase::IgnoreCase))
+	{
+		FolderPath = LevelProgressTrackerSettingsPrivate::DefaultDatabaseFolder;
+	}
+
+	// Backward compatibility: old settings could be saved as relative paths.
+	if (!FolderPath.StartsWith(TEXT("/")))
+	{
+		if (FolderPath.Equals(TEXT("Game"), ESearchCase::IgnoreCase))
+		{
+			FolderPath = TEXT("/Game");
+		}
+		else if (FolderPath.StartsWith(TEXT("Game/"), ESearchCase::IgnoreCase))
+		{
+			FolderPath = FString::Printf(TEXT("/%s"), *FolderPath);
+		}
+		else
+		{
+			FolderPath = FString::Printf(TEXT("/Game/%s"), *FolderPath);
+		}
+	}
+
+	OutDatabaseFolderLongPath = FolderPath;
 
 	if (!FPackageName::IsValidLongPackageName(OutDatabaseFolderLongPath))
 	{
