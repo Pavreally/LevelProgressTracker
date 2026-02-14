@@ -2,6 +2,13 @@
 
 #include "LevelPreloadDatabase.h"
 
+namespace
+{
+	static void SyncLegacyGlobalDefaultsFlag(FLevelPreloadEntry& Entry)
+	{
+		Entry.bRulesInitializedFromGlobalDefaults = Entry.Rules.bRulesInitializedFromGlobalDefaults;
+	}
+}
 
 const FLevelPreloadEntry* ULevelPreloadDatabase::FindEntryByLevel(const TSoftObjectPtr<UWorld>& Level) const
 {
@@ -34,6 +41,7 @@ FLevelPreloadEntry* ULevelPreloadDatabase::FindEntryByLevel(const TSoftObjectPtr
 	{
 		if (Entry.Level.ToSoftObjectPath() == LevelPath)
 		{
+			SyncLegacyGlobalDefaultsFlag(Entry);
 			return &Entry;
 		}
 	}
@@ -78,12 +86,14 @@ FLevelPreloadEntry* ULevelPreloadDatabase::FindOrAddEntryByLevel(const TSoftObje
 			Levels.RemoveAt(DuplicateIndices[DupArrayIndex]);
 		}
 
+		SyncLegacyGlobalDefaultsFlag(Levels[PrimaryIndex]);
 		return &Levels[PrimaryIndex];
 	}
 
 	const int32 NewEntryIndex = Levels.AddDefaulted();
 	FLevelPreloadEntry& NewEntry = Levels[NewEntryIndex];
 	NewEntry.Level = Level;
+	SyncLegacyGlobalDefaultsFlag(NewEntry);
 	bWasAdded = true;
 
 	return &NewEntry;
@@ -114,6 +124,8 @@ bool ULevelPreloadDatabase::UpdateEntryAssetsByLevel(const TSoftObjectPtr<UWorld
 		UniquePaths.Add(AssetPath);
 		Entry->Assets.Add(AssetPath);
 	}
+
+	SyncLegacyGlobalDefaultsFlag(*Entry);
 
 	return true;
 }

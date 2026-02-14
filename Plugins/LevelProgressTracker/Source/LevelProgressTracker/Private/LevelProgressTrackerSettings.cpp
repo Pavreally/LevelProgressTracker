@@ -98,6 +98,7 @@ void ULevelProgressTrackerSettings::BuildGlobalDefaultRules(FLPTLevelRules& OutR
 	OutRules.AssetRules = AssetRules;
 	OutRules.FolderRules = FolderRules;
 	OutRules.bAllowWorldPartitionAutoScan = bAllowWorldPartitionAutoScan;
+	OutRules.WorldPartitionDataLayerAssets = WorldPartitionDataLayerAssets;
 	OutRules.WorldPartitionRegions = WorldPartitionRegions;
 	OutRules.WorldPartitionCells = WorldPartitionCells;
 }
@@ -119,3 +120,4 @@ void ULevelProgressTrackerSettings::OpenLevelRulesEditorForCurrentLevel()
 	OnOpenLevelRulesEditorRequested.Broadcast(this);
 #endif
 }
+

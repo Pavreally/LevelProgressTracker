@@ -268,6 +268,7 @@ bool ULevelPreloadAssetFilter::HasAnyRule(const FLPTLevelRules* Rules)
 	return Rules ? (
 		Rules->AssetRules.Num() > 0 ||
 		Rules->FolderRules.Num() > 0 ||
+		Rules->WorldPartitionDataLayerAssets.Num() > 0 ||
 		Rules->WorldPartitionCells.Num() > 0 ||
 		Rules->WorldPartitionRegions.Num() > 0
 	) : false;

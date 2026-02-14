@@ -14,7 +14,6 @@
 #include "Engine/World.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Framework/Commands/UIAction.h"
-#include "GameFramework/Actor.h"
 #include "HAL/FileManager.h"
 #include "Interfaces/IPluginManager.h"
 #include "IStructureDetailsView.h"
@@ -32,6 +31,13 @@
 #include "UObject/SavePackage.h"
 #include "UObject/StructOnScope.h"
 #include "UObject/UObjectGlobals.h"
+#include "WorldPartition/WorldPartition.h"
+#include "WorldPartition/WorldPartitionActorDescInstance.h"
+#include "WorldPartition/WorldPartitionHelpers.h"
+#include "WorldPartition/WorldPartitionSubsystem.h"
+#include "WorldPartition/DataLayer/DataLayerInstance.h"
+#include "WorldPartition/DataLayer/DataLayerManager.h"
+#include "WorldPartition/DataLayer/DataLayerSubsystem.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SCheckBox.h"
 #include "Widgets/Layout/SBorder.h"
@@ -49,6 +55,120 @@ namespace LevelProgressTrackerEditorPrivate
 	static bool IsEngineOrScriptPackage(const FString& LongPackageName)
 	{
 		return LongPackageName.StartsWith(TEXT("/Engine/")) || LongPackageName.StartsWith(TEXT("/Script/"));
+	}
+
+	static FString NormalizeFolderRuleForMerge(const FString& InFolderPath);
+
+	static FString BuildWorldPartitionExternalPackagePrefix(const FString& WorldPackagePath, const TCHAR* ExternalFolderName)
+	{
+		if (!WorldPackagePath.StartsWith(TEXT("/")) || !ExternalFolderName || !*ExternalFolderName)
+		{
+			return FString();
+		}
+
+		const int32 MountRootEnd = WorldPackagePath.Find(TEXT("/"), ESearchCase::IgnoreCase, ESearchDir::FromStart, 1);
+		if (MountRootEnd == INDEX_NONE)
+		{
+			return FString();
+		}
+
+		const FString MountRoot = WorldPackagePath.Left(MountRootEnd + 1); // "/PluginOrGame/"
+		const FString RelativeWorldPath = WorldPackagePath.RightChop(MountRootEnd + 1);
+		if (RelativeWorldPath.IsEmpty())
+		{
+			return FString();
+		}
+
+		return FString::Printf(TEXT("%s%s/%s/"), *MountRoot, ExternalFolderName, *RelativeWorldPath);
+	}
+
+	static bool IsExternalPackageOfWorldPartitionLevel(const FString& SavedPackageName, const UWorld* EditorWorld)
+	{
+		if (!EditorWorld)
+		{
+			return false;
+		}
+
+		const UPackage* WorldPackage = EditorWorld->GetOutermost();
+		if (!WorldPackage)
+		{
+			return false;
+		}
+
+		const FString WorldPackagePath = UWorld::RemovePIEPrefix(WorldPackage->GetName());
+		const FString NormalizedSavedPackageName = UWorld::RemovePIEPrefix(SavedPackageName);
+		if (WorldPackagePath.IsEmpty() || NormalizedSavedPackageName.IsEmpty())
+		{
+			return false;
+		}
+
+		const FString ExternalActorsPrefix = BuildWorldPartitionExternalPackagePrefix(WorldPackagePath, TEXT("__ExternalActors__"));
+		if (!ExternalActorsPrefix.IsEmpty() && NormalizedSavedPackageName.StartsWith(ExternalActorsPrefix))
+		{
+			return true;
+		}
+
+		const FString ExternalObjectsPrefix = BuildWorldPartitionExternalPackagePrefix(WorldPackagePath, TEXT("__ExternalObjects__"));
+		if (!ExternalObjectsPrefix.IsEmpty() && NormalizedSavedPackageName.StartsWith(ExternalObjectsPrefix))
+		{
+			return true;
+		}
+
+		return false;
+	}
+
+	static void AddDataLayerNameWithVariants(const FName InName, TArray<FName>& InOutNames)
+	{
+		if (InName.IsNone())
+		{
+			return;
+		}
+
+		auto AddUniqueName = [&InOutNames](const FName NameToAdd)
+		{
+			if (!NameToAdd.IsNone())
+			{
+				InOutNames.AddUnique(NameToAdd);
+			}
+		};
+
+		AddUniqueName(InName);
+
+		FString NameString = InName.ToString();
+		if (NameString.IsEmpty())
+		{
+			return;
+		}
+
+		// Keep both full and short forms because Data Layer names can be represented
+		// differently between actor descriptors and rule sources.
+		auto AddShortVariant = [&AddUniqueName](const FString& Candidate)
+		{
+			if (!Candidate.IsEmpty())
+			{
+				AddUniqueName(FName(*Candidate));
+			}
+		};
+
+		AddShortVariant(NameString);
+
+		const int32 LastSlash = NameString.Find(TEXT("/"), ESearchCase::IgnoreCase, ESearchDir::FromEnd);
+		if (LastSlash != INDEX_NONE)
+		{
+			AddShortVariant(NameString.RightChop(LastSlash + 1));
+		}
+
+		const int32 LastDot = NameString.Find(TEXT("."), ESearchCase::IgnoreCase, ESearchDir::FromEnd);
+		if (LastDot != INDEX_NONE)
+		{
+			AddShortVariant(NameString.RightChop(LastDot + 1));
+		}
+
+		const int32 LastColon = NameString.Find(TEXT(":"), ESearchCase::IgnoreCase, ESearchDir::FromEnd);
+		if (LastColon != INDEX_NONE)
+		{
+			AddShortVariant(NameString.RightChop(LastColon + 1));
+		}
 	}
 
 	static void AddFallbackAssetFromPackagePath(
@@ -100,6 +220,12 @@ namespace LevelProgressTrackerEditorPrivate
 				continue;
 			}
 
+			// World assets are level containers and should not be part of preload content candidates.
+			if (AssetData.AssetClassPath == UWorld::StaticClass()->GetClassPathName())
+			{
+				continue;
+			}
+
 			const FSoftObjectPath AssetPath = AssetData.GetSoftObjectPath();
 			if (!AssetPath.IsValid())
 			{
@@ -114,6 +240,54 @@ namespace LevelProgressTrackerEditorPrivate
 
 			UniquePaths.Add(AssetPath);
 			OutAssets.Add(AssetPath);
+		}
+	}
+
+	static void AppendFolderRuleCandidates(
+		IAssetRegistry& Registry,
+		const FLPTLevelRules& Rules,
+		TSet<FSoftObjectPath>& UniquePaths,
+		TArray<FSoftObjectPath>& OutAssets
+	)
+	{
+		for (const FDirectoryPath& FolderRule : Rules.FolderRules)
+		{
+			const FString NormalizedFolderPath = NormalizeFolderRuleForMerge(FolderRule.Path);
+			if (NormalizedFolderPath.IsEmpty() || IsEngineOrScriptPackage(NormalizedFolderPath))
+			{
+				continue;
+			}
+
+			TArray<FAssetData> FolderAssets;
+			Registry.GetAssetsByPath(FName(*NormalizedFolderPath), FolderAssets, true, true);
+
+			for (const FAssetData& AssetData : FolderAssets)
+			{
+				if (!AssetData.IsValid() || AssetData.HasAnyPackageFlags(PKG_EditorOnly))
+				{
+					continue;
+				}
+
+				if (AssetData.AssetClassPath == UWorld::StaticClass()->GetClassPathName())
+				{
+					continue;
+				}
+
+				const FSoftObjectPath AssetPath = AssetData.GetSoftObjectPath();
+				if (!AssetPath.IsValid())
+				{
+					continue;
+				}
+
+				const FString AssetLongPackageName = AssetPath.GetLongPackageName();
+				if (AssetLongPackageName.IsEmpty() || IsEngineOrScriptPackage(AssetLongPackageName) || UniquePaths.Contains(AssetPath))
+				{
+					continue;
+				}
+
+				UniquePaths.Add(AssetPath);
+				OutAssets.Add(AssetPath);
+			}
 		}
 	}
 
@@ -136,6 +310,474 @@ namespace LevelProgressTrackerEditorPrivate
 		{
 			AppendAssetsFromPackage(Registry, DependencyPackageName, UniquePaths, OutAssets);
 		}
+	}
+
+	static void AppendHardDependenciesAssets(
+		IAssetRegistry& Registry,
+		const FName RootPackageName,
+		TSet<FSoftObjectPath>& UniquePaths,
+		TArray<FSoftObjectPath>& OutAssets
+	)
+	{
+		TArray<FName> Dependencies;
+		Registry.GetDependencies(
+			RootPackageName,
+			Dependencies,
+			UE::AssetRegistry::EDependencyCategory::Package,
+			UE::AssetRegistry::EDependencyQuery::Hard
+		);
+
+		for (const FName DependencyPackageName : Dependencies)
+		{
+			AppendAssetsFromPackage(Registry, DependencyPackageName, UniquePaths, OutAssets);
+		}
+	}
+
+	static void AppendExplicitAssetRuleCandidates(
+		const FLPTLevelRules& Rules,
+		TSet<FSoftObjectPath>& UniquePaths,
+		TArray<FSoftObjectPath>& OutAssets
+	)
+	{
+		for (const FSoftObjectPath& RuleAssetPath : Rules.AssetRules)
+		{
+			if (!RuleAssetPath.IsValid())
+			{
+				continue;
+			}
+
+			const FString RuleLongPackageName = RuleAssetPath.GetLongPackageName();
+			if (RuleLongPackageName.IsEmpty() || IsEngineOrScriptPackage(RuleLongPackageName) || UniquePaths.Contains(RuleAssetPath))
+			{
+				continue;
+			}
+
+			UniquePaths.Add(RuleAssetPath);
+			OutAssets.Add(RuleAssetPath);
+		}
+	}
+
+	static FString NormalizeFolderRuleForMerge(const FString& InFolderPath)
+	{
+		FString FolderPath = InFolderPath;
+		FolderPath.TrimStartAndEndInline();
+		FolderPath.ReplaceInline(TEXT("\\"), TEXT("/"));
+
+		if (FolderPath.IsEmpty())
+		{
+			return FString();
+		}
+
+		while (FolderPath.EndsWith(TEXT("/")))
+		{
+			FolderPath.LeftChopInline(1, EAllowShrinking::No);
+		}
+
+		if (FolderPath.IsEmpty())
+		{
+			return FString();
+		}
+
+		if (FolderPath.StartsWith(TEXT("/")))
+		{
+			return FolderPath;
+		}
+
+		if (FolderPath.StartsWith(TEXT("Game/")))
+		{
+			return FString::Printf(TEXT("/%s"), *FolderPath);
+		}
+
+		return FString::Printf(TEXT("/Game/%s"), *FolderPath);
+	}
+
+	static TArray<FSoftObjectPath> MergeSoftObjectPaths(
+		const TArray<FSoftObjectPath>& LevelPaths,
+		const TArray<FSoftObjectPath>& GlobalPaths
+	)
+	{
+		TArray<FSoftObjectPath> Merged;
+		TSet<FSoftObjectPath> Unique;
+		Merged.Reserve(LevelPaths.Num() + GlobalPaths.Num());
+
+		auto AppendUnique = [&Merged, &Unique](const TArray<FSoftObjectPath>& Paths)
+		{
+			for (const FSoftObjectPath& Path : Paths)
+			{
+				if (!Path.IsValid() || Unique.Contains(Path))
+				{
+					continue;
+				}
+
+				Unique.Add(Path);
+				Merged.Add(Path);
+			}
+		};
+
+		AppendUnique(LevelPaths);
+		AppendUnique(GlobalPaths);
+		return Merged;
+	}
+
+	static TArray<FDirectoryPath> MergeFolderPaths(
+		const TArray<FDirectoryPath>& LevelPaths,
+		const TArray<FDirectoryPath>& GlobalPaths
+	)
+	{
+		TArray<FDirectoryPath> Merged;
+		TSet<FString> Unique;
+		Merged.Reserve(LevelPaths.Num() + GlobalPaths.Num());
+
+		auto AppendUnique = [&Merged, &Unique](const TArray<FDirectoryPath>& Paths)
+		{
+			for (const FDirectoryPath& Path : Paths)
+			{
+				const FString NormalizedPath = NormalizeFolderRuleForMerge(Path.Path);
+				if (NormalizedPath.IsEmpty() || Unique.Contains(NormalizedPath))
+				{
+					continue;
+				}
+
+				Unique.Add(NormalizedPath);
+
+				FDirectoryPath StoredPath;
+				StoredPath.Path = NormalizedPath;
+				Merged.Add(StoredPath);
+			}
+		};
+
+		AppendUnique(LevelPaths);
+		AppendUnique(GlobalPaths);
+		return Merged;
+	}
+
+	static TArray<FName> MergeNameRules(const TArray<FName>& LevelRules, const TArray<FName>& GlobalRules)
+	{
+		TArray<FName> Merged;
+		TSet<FName> Unique;
+		Merged.Reserve(LevelRules.Num() + GlobalRules.Num());
+
+		auto AppendUnique = [&Merged, &Unique](const TArray<FName>& Rules)
+		{
+			for (const FName Rule : Rules)
+			{
+				if (Rule.IsNone() || Unique.Contains(Rule))
+				{
+					continue;
+				}
+
+				Unique.Add(Rule);
+				Merged.Add(Rule);
+			}
+		};
+
+		AppendUnique(LevelRules);
+		AppendUnique(GlobalRules);
+		return Merged;
+	}
+
+	static TArray<TSoftObjectPtr<UDataLayerAsset>> MergeDataLayerAssetRules(
+		const TArray<TSoftObjectPtr<UDataLayerAsset>>& LevelRules,
+		const TArray<TSoftObjectPtr<UDataLayerAsset>>& GlobalRules
+	)
+	{
+		TArray<TSoftObjectPtr<UDataLayerAsset>> Merged;
+		TSet<FSoftObjectPath> Unique;
+		Merged.Reserve(LevelRules.Num() + GlobalRules.Num());
+
+		auto AppendUnique = [&Merged, &Unique](const TArray<TSoftObjectPtr<UDataLayerAsset>>& Rules)
+		{
+			for (const TSoftObjectPtr<UDataLayerAsset>& Rule : Rules)
+			{
+				const FSoftObjectPath RulePath = Rule.ToSoftObjectPath();
+				if (!RulePath.IsValid() || Unique.Contains(RulePath))
+				{
+					continue;
+				}
+
+				Unique.Add(RulePath);
+				Merged.Add(Rule);
+			}
+		};
+
+		AppendUnique(LevelRules);
+		AppendUnique(GlobalRules);
+		return Merged;
+	}
+
+	static TArray<FString> MergeStringRules(const TArray<FString>& LevelRules, const TArray<FString>& GlobalRules)
+	{
+		TArray<FString> Merged;
+		TSet<FString> Unique;
+		Merged.Reserve(LevelRules.Num() + GlobalRules.Num());
+
+		auto AppendUnique = [&Merged, &Unique](const TArray<FString>& Rules)
+		{
+			for (const FString& Rule : Rules)
+			{
+				FString NormalizedRule = Rule;
+				NormalizedRule.TrimStartAndEndInline();
+
+				if (NormalizedRule.IsEmpty() || Unique.Contains(NormalizedRule))
+				{
+					continue;
+				}
+
+				Unique.Add(NormalizedRule);
+				Merged.Add(NormalizedRule);
+			}
+		};
+
+		AppendUnique(LevelRules);
+		AppendUnique(GlobalRules);
+		return Merged;
+	}
+
+	static const UDataLayerInstance* ResolveDataLayerInstanceByRuleName(const UDataLayerManager* DataLayerManager, const FName RuleName)
+	{
+		if (!DataLayerManager || RuleName.IsNone())
+		{
+			return nullptr;
+		}
+
+		if (const UDataLayerInstance* DataLayerInstance = DataLayerManager->GetDataLayerInstanceFromName(RuleName))
+		{
+			return DataLayerInstance;
+		}
+
+		FString RuleNameString = RuleName.ToString();
+		RuleNameString.TrimStartAndEndInline();
+		if (RuleNameString.IsEmpty())
+		{
+			return nullptr;
+		}
+
+		for (const UDataLayerInstance* DataLayerInstance : DataLayerManager->GetDataLayerInstances())
+		{
+			if (!DataLayerInstance)
+			{
+				continue;
+			}
+
+			if (RuleNameString.Equals(DataLayerInstance->GetDataLayerShortName(), ESearchCase::IgnoreCase) ||
+				RuleNameString.Equals(DataLayerInstance->GetDataLayerFullName(), ESearchCase::IgnoreCase))
+			{
+				return DataLayerInstance;
+			}
+		}
+
+		return nullptr;
+	}
+
+	static void ResolveWorldPartitionRegionRulesAsDataLayers(UWorld* World, FLPTLevelRules& InOutRules)
+	{
+		if (!World || (InOutRules.WorldPartitionDataLayerAssets.IsEmpty() && InOutRules.WorldPartitionRegions.IsEmpty()))
+		{
+			return;
+		}
+
+		UWorldPartitionSubsystem* WorldPartitionSubsystem = World->GetSubsystem<UWorldPartitionSubsystem>();
+		if (!WorldPartitionSubsystem)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("LPT Editor: UWorldPartitionSubsystem is unavailable for '%s'. Continuing with best-effort Data Layer rule resolution."),
+				*World->GetOutermost()->GetName()
+			);
+		}
+
+		UDataLayerSubsystem* DataLayerSubsystem = World->GetSubsystem<UDataLayerSubsystem>();
+		if (!DataLayerSubsystem)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("LPT Editor: UDataLayerSubsystem is unavailable for '%s'. Continuing with best-effort Data Layer rule resolution."),
+				*World->GetOutermost()->GetName()
+			);
+		}
+
+		UDataLayerManager* DataLayerManager = World->GetDataLayerManager();
+		if (!DataLayerManager)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("LPT Editor: UDataLayerManager is unavailable for '%s'. Keeping unresolved Data Layer name rules as-is."),
+				*World->GetOutermost()->GetName()
+			);
+			return;
+		}
+
+		TArray<FName> ResolvedDataLayers;
+		TSet<FName> UniqueResolvedDataLayers;
+		ResolvedDataLayers.Reserve(InOutRules.WorldPartitionRegions.Num() + InOutRules.WorldPartitionDataLayerAssets.Num() * 2);
+
+		auto AddResolvedDataLayerName = [&ResolvedDataLayers, &UniqueResolvedDataLayers](const FName DataLayerName)
+		{
+			if (DataLayerName.IsNone() || UniqueResolvedDataLayers.Contains(DataLayerName))
+			{
+				return;
+			}
+
+			UniqueResolvedDataLayers.Add(DataLayerName);
+			ResolvedDataLayers.Add(DataLayerName);
+		};
+
+		for (const FName RegionRuleName : InOutRules.WorldPartitionRegions)
+		{
+			if (RegionRuleName.IsNone())
+			{
+				continue;
+			}
+
+			const UDataLayerInstance* DataLayerInstance = ResolveDataLayerInstanceByRuleName(DataLayerManager, RegionRuleName);
+			if (!DataLayerInstance)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("LPT Editor: Data Layer '%s' was not found in world '%s'. Falling back to raw name match."),
+					*RegionRuleName.ToString(),
+					*World->GetOutermost()->GetName()
+				);
+				AddResolvedDataLayerName(RegionRuleName);
+				continue;
+			}
+
+			AddResolvedDataLayerName(DataLayerInstance->GetDataLayerFName());
+			AddResolvedDataLayerName(FName(*DataLayerInstance->GetDataLayerShortName()));
+		}
+
+		for (const TSoftObjectPtr<UDataLayerAsset>& DataLayerAssetRule : InOutRules.WorldPartitionDataLayerAssets)
+		{
+			const FSoftObjectPath DataLayerAssetPath = DataLayerAssetRule.ToSoftObjectPath();
+			if (!DataLayerAssetPath.IsValid())
+			{
+				continue;
+			}
+
+			const UDataLayerAsset* DataLayerAsset = DataLayerAssetRule.LoadSynchronous();
+			if (!DataLayerAsset)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("LPT Editor: Failed to load Data Layer asset '%s' in world '%s'. Rule will be ignored."),
+					*DataLayerAssetPath.ToString(),
+					*World->GetOutermost()->GetName()
+				);
+				continue;
+			}
+
+			const UDataLayerInstance* DataLayerInstance = DataLayerManager->GetDataLayerInstanceFromAsset(DataLayerAsset);
+			if (!DataLayerInstance)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("LPT Editor: Data Layer asset '%s' has no instance in world '%s'. Rule will be ignored."),
+					*DataLayerAssetPath.ToString(),
+					*World->GetOutermost()->GetName()
+				);
+				continue;
+			}
+
+			AddResolvedDataLayerName(DataLayerInstance->GetDataLayerFName());
+			AddResolvedDataLayerName(FName(*DataLayerInstance->GetDataLayerShortName()));
+		}
+
+		InOutRules.WorldPartitionRegions = MoveTemp(ResolvedDataLayers);
+	}
+
+	static void CollectWorldPartitionActorPackages(UWorld* World, const FLPTLevelRules& Rules, TSet<FName>& InOutCandidateActorPackages)
+	{
+		if (!World)
+		{
+			return;
+		}
+
+		UWorldPartition* WorldPartition = World->GetWorldPartition();
+		if (!WorldPartition)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("LPT Editor: World Partition is unavailable for '%s'. ActorDesc scan skipped."),
+				*World->GetOutermost()->GetName()
+			);
+			return;
+		}
+
+		FLPTLevelRules NormalizedRules = Rules;
+		if (NormalizedRules.WorldPartitionRegions.Num() > 0)
+		{
+			TArray<FName> ExpandedRegionRules;
+			ExpandedRegionRules.Reserve(NormalizedRules.WorldPartitionRegions.Num() * 4);
+			for (const FName RegionRule : NormalizedRules.WorldPartitionRegions)
+			{
+				AddDataLayerNameWithVariants(RegionRule, ExpandedRegionRules);
+			}
+			NormalizedRules.WorldPartitionRegions = MoveTemp(ExpandedRegionRules);
+		}
+
+		FWorldPartitionHelpers::ForEachActorDescInstance(WorldPartition, [&InOutCandidateActorPackages, &NormalizedRules](const FWorldPartitionActorDescInstance* ActorDescInstance)
+		{
+			if (!ActorDescInstance)
+			{
+				return true;
+			}
+
+			TArray<FName> ActorDataLayerNamesForFilter;
+			const TArray<FName> ResolvedInstanceNames = ActorDescInstance->GetDataLayerInstanceNames().ToArray();
+			ActorDataLayerNamesForFilter.Reserve(ResolvedInstanceNames.Num() * 4);
+			for (const FName InstanceName : ResolvedInstanceNames)
+			{
+				AddDataLayerNameWithVariants(InstanceName, ActorDataLayerNamesForFilter);
+			}
+
+			// Fallback when resolved Data Layer instance names are unavailable in current editor state.
+			const TArray<FName> RawActorDataLayers = ActorDescInstance->GetDataLayers();
+			for (const FName RawDataLayerName : RawActorDataLayers)
+			{
+				AddDataLayerNameWithVariants(RawDataLayerName, ActorDataLayerNamesForFilter);
+			}
+
+			const FName ActorPackageName = ActorDescInstance->GetActorPackage();
+			const FString ActorPackagePath = ActorPackageName.ToString();
+			FSoftObjectPath ActorObjectPath = ActorDescInstance->GetActorSoftPath();
+			if (!ActorObjectPath.IsValid())
+			{
+				// Use a stable synthetic object name to keep package-based filtering functional
+				// even when ActorSoftPath is unresolved in World Partition metadata.
+				if (!ActorPackagePath.IsEmpty())
+				{
+					ActorObjectPath = FSoftObjectPath(FString::Printf(TEXT("%s.%s"), *ActorPackagePath, TEXT("LPT_Actor")));
+				}
+			}
+
+			if (!ULevelPreloadAssetFilter::ShouldIncludeWorldPartitionActor(ActorObjectPath, ActorDataLayerNamesForFilter, &NormalizedRules))
+			{
+				return true;
+			}
+
+			if (!ActorPackageName.IsNone())
+			{
+				InOutCandidateActorPackages.Add(ActorPackageName);
+			}
+
+			return true;
+		});
+	}
+
+	static bool IsGlobalDefaultsEnabled(const FLevelPreloadEntry& Entry)
+	{
+		// Rules flag is the source of truth; legacy mirror is synchronized separately.
+		return Entry.Rules.bRulesInitializedFromGlobalDefaults;
+	}
+
+	static FLPTLevelRules BuildMergedRulesWithGlobalDominance(const FLPTLevelRules& LevelRules, const ULevelProgressTrackerSettings* Settings)
+	{
+		if (!Settings)
+		{
+			return LevelRules;
+		}
+
+		FLPTLevelRules GlobalRules;
+		Settings->BuildGlobalDefaultRules(GlobalRules);
+
+		FLPTLevelRules Merged = LevelRules;
+		Merged.bRulesInitializedFromGlobalDefaults = true;
+
+		// Conflict order is Level first, then Global. Global values dominate on conflicting options.
+		Merged.AssetRules = MergeSoftObjectPaths(LevelRules.AssetRules, GlobalRules.AssetRules);
+		Merged.FolderRules = MergeFolderPaths(LevelRules.FolderRules, GlobalRules.FolderRules);
+		Merged.WorldPartitionDataLayerAssets = MergeDataLayerAssetRules(LevelRules.WorldPartitionDataLayerAssets, GlobalRules.WorldPartitionDataLayerAssets);
+		Merged.WorldPartitionRegions = MergeNameRules(LevelRules.WorldPartitionRegions, GlobalRules.WorldPartitionRegions);
+		Merged.WorldPartitionCells = MergeStringRules(LevelRules.WorldPartitionCells, GlobalRules.WorldPartitionCells);
+		Merged.bUseExclusionMode = GlobalRules.bUseExclusionMode;
+		Merged.bAllowWorldPartitionAutoScan = GlobalRules.bAllowWorldPartitionAutoScan;
+		return Merged;
 	}
 }
 
@@ -270,9 +912,35 @@ void FLevelProgressTrackerEditorModule::OnPackageSaved(const FString& PackageFil
 		return;
 	}
 
+	const FString SavedPackageName = UWorld::RemovePIEPrefix(SavedPackage->GetName());
+
 	UWorld* SavedWorld = UWorld::FindWorldInPackage(SavedPackage);
 	if (!SavedWorld)
 	{
+		// World Partition usually saves external actor/object packages, not the map package itself.
+		// In that case, rebuild for the currently edited partitioned world if the package belongs to it.
+		if (!GEditor)
+		{
+			return;
+		}
+
+		UWorld* EditorWorld = GEditor->GetEditorWorldContext().World();
+		if (!EditorWorld || !EditorWorld->IsPartitionedWorld())
+		{
+			return;
+		}
+
+		if (!LevelProgressTrackerEditorPrivate::IsExternalPackageOfWorldPartitionLevel(SavedPackageName, EditorWorld))
+		{
+			return;
+		}
+
+		UE_LOG(LogTemp, Log, TEXT("LPT Editor: Detected WP external package save '%s'. Rebuilding for '%s'."),
+			*SavedPackageName,
+			*EditorWorld->GetOutermost()->GetName()
+		);
+
+		RebuildLevelDependencies(EditorWorld);
 		return;
 	}
 
@@ -303,7 +971,12 @@ bool FLevelProgressTrackerEditorModule::TryGetCurrentEditorLevel(TSoftObjectPtr<
 		return false;
 	}
 
-	OutLevelPackagePath = WorldPackage->GetName();
+	OutLevelPackagePath = UWorld::RemovePIEPrefix(WorldPackage->GetName());
+	if (OutLevelPackagePath.IsEmpty())
+	{
+		OutLevelPackagePath = WorldPackage->GetName();
+	}
+
 	const FString LevelAssetName = FPackageName::GetLongPackageAssetName(OutLevelPackagePath);
 	if (LevelAssetName.IsEmpty())
 	{
@@ -359,11 +1032,21 @@ void FLevelProgressTrackerEditorModule::RebuildLevelDependencies(UWorld* SavedWo
 	if (bWasEntryAdded)
 	{
 		Settings->BuildGlobalDefaultRules(LevelEntry->Rules);
-		LevelEntry->bRulesInitializedFromGlobalDefaults = true;
+		LevelEntry->Rules.bRulesInitializedFromGlobalDefaults = false;
+		LevelEntry->bRulesInitializedFromGlobalDefaults = false;
 	}
 
+	const bool bUseGlobalDefaults = LevelProgressTrackerEditorPrivate::IsGlobalDefaultsEnabled(*LevelEntry);
+	// Keep legacy and current flags synchronized in both directions of the toggle.
+	LevelEntry->Rules.bRulesInitializedFromGlobalDefaults = bUseGlobalDefaults;
+	LevelEntry->bRulesInitializedFromGlobalDefaults = bUseGlobalDefaults;
+
+	const FLPTLevelRules EffectiveRules = bUseGlobalDefaults
+		? LevelProgressTrackerEditorPrivate::BuildMergedRulesWithGlobalDominance(LevelEntry->Rules, Settings)
+		: LevelEntry->Rules;
+
 	const bool bIsWorldPartition = SavedWorld->IsPartitionedWorld();
-	if (bIsWorldPartition && !LevelEntry->Rules.bAllowWorldPartitionAutoScan)
+	if (bIsWorldPartition && !EffectiveRules.bAllowWorldPartitionAutoScan)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("LPT Editor: World Partition auto scan is disabled for this level. Skipping database generation for '%s'."),
 			*SavedWorld->GetOutermost()->GetName()
@@ -392,53 +1075,48 @@ void FLevelProgressTrackerEditorModule::RebuildLevelDependencies(UWorld* SavedWo
 	}
 	else
 	{
+		FLPTLevelRules WorldPartitionScanRules = EffectiveRules;
+		LevelProgressTrackerEditorPrivate::ResolveWorldPartitionRegionRulesAsDataLayers(SavedWorld, WorldPartitionScanRules);
+
 		TSet<FName> CandidateActorPackages;
+		LevelProgressTrackerEditorPrivate::CollectWorldPartitionActorPackages(SavedWorld, WorldPartitionScanRules, CandidateActorPackages);
 
-		for (ULevel* LoadedLevel : SavedWorld->GetLevels())
-		{
-			if (!LoadedLevel)
-			{
-				continue;
-			}
-
-			for (AActor* Actor : LoadedLevel->Actors)
-			{
-				if (!IsValid(Actor))
-				{
-					continue;
-				}
-
-				UPackage* ActorPackage = Actor->GetPackage();
-				if (!ActorPackage)
-				{
-					continue;
-				}
-
-				const FString ActorPackagePath = ActorPackage->GetName();
-				const FString ActorAssetName = FPackageName::GetLongPackageAssetName(ActorPackagePath);
-				const FString ActorObjectName = !ActorAssetName.IsEmpty() ? ActorAssetName : Actor->GetName();
-				const FSoftObjectPath ActorObjectPath(FString::Printf(TEXT("%s.%s"), *ActorPackagePath, *ActorObjectName));
-
-				const TArray<FName> ActorRegions = Actor->GetDataLayerInstanceNames();
-				if (!ULevelPreloadAssetFilter::ShouldIncludeWorldPartitionActor(ActorObjectPath, ActorRegions, &LevelEntry->Rules))
-				{
-					continue;
-				}
-
-				CandidateActorPackages.Add(FName(*ActorPackagePath));
-			}
-		}
-
-		// World Partition scan uses only packages of actors currently loaded in memory.
-		// No forced loading of hidden cells or full-world traversal is performed.
+		// World Partition scan uses ActorDesc metadata and AssetRegistry package dependencies only.
+		// It is independent from currently loaded editor actors.
 		for (const FName ActorPackageName : CandidateActorPackages)
 		{
 			LevelProgressTrackerEditorPrivate::AppendAssetsFromPackage(Registry, ActorPackageName, UniqueCandidateAssets, CandidateAssets);
-			LevelProgressTrackerEditorPrivate::AppendDirectDependenciesAssets(Registry, ActorPackageName, UniqueCandidateAssets, CandidateAssets);
+			LevelProgressTrackerEditorPrivate::AppendHardDependenciesAssets(Registry, ActorPackageName, UniqueCandidateAssets, CandidateAssets);
 		}
+
+		UE_LOG(LogTemp, Log, TEXT("LPT Editor: WP Candidates: %d"), CandidateAssets.Num());
+
+		// Keep explicit asset rules discoverable in inclusion mode even when they were not reached by package traversal.
+		LevelProgressTrackerEditorPrivate::AppendExplicitAssetRuleCandidates(EffectiveRules, UniqueCandidateAssets, CandidateAssets);
 	}
 
-	const TArray<FSoftObjectPath> FilteredAssets = ULevelPreloadAssetFilter::FilterAssets(CandidateAssets, &LevelEntry->Rules);
+	FLPTLevelRules FinalFilterRules = EffectiveRules;
+	if (bIsWorldPartition)
+	{
+		// For World Partition, Data Layer and Cell rules are evaluated during actor/package collection.
+		// Final asset filtering should only apply asset/folder include/exclude rules.
+		FinalFilterRules.WorldPartitionDataLayerAssets.Empty();
+		FinalFilterRules.WorldPartitionRegions.Empty();
+		FinalFilterRules.WorldPartitionCells.Empty();
+	}
+
+	TArray<FSoftObjectPath> FilteredAssets;
+	if (bIsWorldPartition && !FinalFilterRules.bUseExclusionMode)
+	{
+		// In WP inclusion mode, keep auto-scanned actor assets and merge additional includes from folder rules.
+		// This prevents global/default include rules from unintentionally replacing Data Layer scan results.
+		LevelProgressTrackerEditorPrivate::AppendFolderRuleCandidates(Registry, FinalFilterRules, UniqueCandidateAssets, CandidateAssets);
+		FilteredAssets = CandidateAssets;
+	}
+	else
+	{
+		FilteredAssets = ULevelPreloadAssetFilter::FilterAssets(CandidateAssets, &FinalFilterRules);
+	}
 
 	DatabaseAsset->Modify();
 	if (!DatabaseAsset->UpdateEntryAssetsByLevel(LevelSoftPtr, FilteredAssets))
@@ -460,7 +1138,7 @@ void FLevelProgressTrackerEditorModule::RebuildLevelDependencies(UWorld* SavedWo
 
 bool FLevelProgressTrackerEditorModule::PromptCreateLevelRules(bool& bApplyGlobalDefaults) const
 {
-	bApplyGlobalDefaults = true;
+	bApplyGlobalDefaults = false;
 
 	bool bCreateConfirmed = false;
 	TSharedPtr<SWindow> DialogWindow;
@@ -492,7 +1170,7 @@ bool FLevelProgressTrackerEditorModule::PromptCreateLevelRules(bool& bApplyGloba
 			.Padding(0.f, 0.f, 0.f, 12.f)
 			[
 				SAssignNew(ApplyDefaultsCheckBox, SCheckBox)
-				.IsChecked(ECheckBoxState::Checked)
+				.IsChecked(ECheckBoxState::Unchecked)
 				[
 					SNew(STextBlock)
 					.Text(FText::FromString(TEXT("Apply Global Default Rules")))
@@ -564,6 +1242,7 @@ void FLevelProgressTrackerEditorModule::OpenLevelRulesWindow(ULevelPreloadDataba
 	if (FLPTLevelRules* WorkingRules = reinterpret_cast<FLPTLevelRules*>(RulesStructOnScope->GetStructMemory()))
 	{
 		*WorkingRules = ExistingEntry->Rules;
+		WorkingRules->bRulesInitializedFromGlobalDefaults = LevelProgressTrackerEditorPrivate::IsGlobalDefaultsEnabled(*ExistingEntry);
 	}
 
 	FPropertyEditorModule& PropertyEditorModule = FModuleManager::LoadModuleChecked<FPropertyEditorModule>("PropertyEditor");
@@ -684,6 +1363,7 @@ void FLevelProgressTrackerEditorModule::OpenLevelRulesWindow(ULevelPreloadDataba
 
 						DatabaseAsset->Modify();
 						MutableEntry->Rules = *WorkingRules;
+						MutableEntry->bRulesInitializedFromGlobalDefaults = MutableEntry->Rules.bRulesInitializedFromGlobalDefaults;
 						DatabaseAsset->MarkPackageDirty();
 						DatabaseAsset->GetOutermost()->MarkPackageDirty();
 						SaveDatabaseAsset(DatabaseAsset);
@@ -752,12 +1432,6 @@ void FLevelProgressTrackerEditorModule::HandleOpenLevelRulesEditorRequested(ULev
 	FLevelPreloadEntry* Entry = DatabaseAsset->FindEntryByLevel(LevelSoftPtr);
 	if (!Entry)
 	{
-		bool bApplyGlobalDefaults = true;
-		if (!PromptCreateLevelRules(bApplyGlobalDefaults))
-		{
-			return;
-		}
-
 		bool bWasAdded = false;
 		Entry = DatabaseAsset->FindOrAddEntryByLevel(LevelSoftPtr, bWasAdded);
 		if (!Entry)
@@ -766,16 +1440,11 @@ void FLevelProgressTrackerEditorModule::HandleOpenLevelRulesEditorRequested(ULev
 			return;
 		}
 
-		if (bApplyGlobalDefaults)
-		{
-			EffectiveSettings->BuildGlobalDefaultRules(Entry->Rules);
-			Entry->bRulesInitializedFromGlobalDefaults = true;
-		}
-		else
-		{
-			Entry->Rules = FLPTLevelRules();
-			Entry->bRulesInitializedFromGlobalDefaults = false;
-		}
+		// Auto-create per-level rules and open the full rules editor immediately.
+		// Global defaults remain user-editable through the first rule toggle in the details panel.
+		EffectiveSettings->BuildGlobalDefaultRules(Entry->Rules);
+		Entry->Rules.bRulesInitializedFromGlobalDefaults = false;
+		Entry->bRulesInitializedFromGlobalDefaults = false;
 
 		DatabaseAsset->Modify();
 		DatabaseAsset->MarkPackageDirty();

@@ -32,8 +32,8 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "LPT")
 	FLPTLevelRules Rules;
 
-	/* Indicates whether Rules were initialized from global defaults when this entry was first created. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "LPT")
+	/* Legacy mirror of Rules.bRulesInitializedFromGlobalDefaults kept for backward compatibility. */
+	UPROPERTY()
 	bool bRulesInitializedFromGlobalDefaults = false;
 };
 

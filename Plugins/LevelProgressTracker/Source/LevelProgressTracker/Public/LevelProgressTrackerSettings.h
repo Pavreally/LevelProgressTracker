@@ -9,6 +9,8 @@
 
 #include "LevelProgressTrackerSettings.generated.h"
 
+class UDataLayerAsset;
+
 /**
  * Filtering and World Partition generation rules used by a single level entry.
  */
@@ -16,6 +18,10 @@ USTRUCT(BlueprintType)
 struct FLPTLevelRules
 {
 	GENERATED_BODY()
+
+	/* Enables merge with global defaults during generation. Level rules are merged first, then global defaults are applied and override conflicting options. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Global Filtering")
+	bool bRulesInitializedFromGlobalDefaults = false;
 
 	/* Exclusion mode: true removes matching assets, false keeps only matching assets. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Filtering")
@@ -25,20 +31,24 @@ struct FLPTLevelRules
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Filtering")
 	TArray<FSoftObjectPath> AssetRules;
 
-	/* Folder rules evaluated by long package name prefix match. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Filtering")
+	/* Folder rules evaluated by long package name prefix match. Use Content Browser paths such as '/Game/Folder' or '/PluginName/Folder'. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Filtering", meta = (ContentDir, LongPackageName, ForceShowPluginContent))
 	TArray<FDirectoryPath> FolderRules;
 
 	/* Enables safe World Partition actor scan using only currently loaded actors. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Partition")
 	bool bAllowWorldPartitionAutoScan = false;
 
-	/* World Partition region names (Data Layer or named region) used for actor filtering. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Partition")
+	/* World Partition Data Layer assets used for actor filtering. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Partition", meta = (DisplayName = "Data Layer Assets"))
+	TArray<TSoftObjectPtr<UDataLayerAsset>> WorldPartitionDataLayerAssets;
+
+	/* Legacy World Partition Data Layer names used for actor filtering when no asset reference is available. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Partition", meta = (DisplayName = "Data Layer Names (Legacy)", AdvancedDisplay))
 	TArray<FName> WorldPartitionRegions;
 
 	/* World Partition cell tokens evaluated by long package name substring match. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Partition")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Partition", meta = (DisplayName = "Cell Rules"))
 	TArray<FString> WorldPartitionCells;
 };
 
@@ -93,7 +103,7 @@ public:
 	TArray<FSoftObjectPath> AssetRules;
 
 	/* These settings are used as default values when creating rules for a new level. They do not affect existing level entries. */
-	UPROPERTY(EditAnywhere, Config, Category = "Global Rule Defaults", meta = (ToolTip = "These settings are used as default values when creating rules for a new level. They do not affect existing level entries."))
+	UPROPERTY(EditAnywhere, Config, Category = "Global Rule Defaults", meta = (ToolTip = "These settings are used as default values when creating rules for a new level. They do not affect existing level entries.", ContentDir, LongPackageName, ForceShowPluginContent))
 	TArray<FDirectoryPath> FolderRules;
 
 	/* These settings are used as default values when creating rules for a new level. They do not affect existing level entries. */
@@ -101,11 +111,15 @@ public:
 	bool bAllowWorldPartitionAutoScan = false;
 
 	/* These settings are used as default values when creating rules for a new level. They do not affect existing level entries. */
-	UPROPERTY(EditAnywhere, Config, Category = "Global Rule Defaults - WorldPartition", meta = (ToolTip = "These settings are used as default values when creating rules for a new level. They do not affect existing level entries."))
+	UPROPERTY(EditAnywhere, Config, Category = "Global Rule Defaults - WorldPartition", meta = (DisplayName = "Data Layer Assets", ToolTip = "These settings are used as default values when creating rules for a new level. They do not affect existing level entries."))
+	TArray<TSoftObjectPtr<UDataLayerAsset>> WorldPartitionDataLayerAssets;
+
+	/* These settings are used as default values when creating rules for a new level. They do not affect existing level entries. */
+	UPROPERTY(EditAnywhere, Config, Category = "Global Rule Defaults - WorldPartition", meta = (DisplayName = "Data Layer Names (Legacy)", AdvancedDisplay, ToolTip = "These settings are used as default values when creating rules for a new level. They do not affect existing level entries."))
 	TArray<FName> WorldPartitionRegions;
 
 	/* These settings are used as default values when creating rules for a new level. They do not affect existing level entries. */
-	UPROPERTY(EditAnywhere, Config, Category = "Global Rule Defaults - WorldPartition", meta = (ToolTip = "These settings are used as default values when creating rules for a new level. They do not affect existing level entries."))
+	UPROPERTY(EditAnywhere, Config, Category = "Global Rule Defaults - WorldPartition", meta = (DisplayName = "Cell Rules", ToolTip = "These settings are used as default values when creating rules for a new level. They do not affect existing level entries."))
 	TArray<FString> WorldPartitionCells;
 	
 };
