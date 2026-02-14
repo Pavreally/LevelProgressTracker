@@ -97,6 +97,7 @@ void ULevelProgressTrackerSettings::BuildGlobalDefaultRules(FLPTLevelRules& OutR
 	OutRules.bUseExclusionMode = bUseExclusionMode;
 	OutRules.AssetRules = AssetRules;
 	OutRules.FolderRules = FolderRules;
+	OutRules.AssetClassFilter = AssetClassFilter;
 	OutRules.bAllowWorldPartitionAutoScan = bAllowWorldPartitionAutoScan;
 	OutRules.WorldPartitionDataLayerAssets = WorldPartitionDataLayerAssets;
 	OutRules.WorldPartitionRegions = WorldPartitionRegions;

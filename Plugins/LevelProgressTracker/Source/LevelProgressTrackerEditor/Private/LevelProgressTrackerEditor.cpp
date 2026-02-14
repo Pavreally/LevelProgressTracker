@@ -10,18 +10,23 @@
 #include "AssetRegistry/IAssetRegistry.h"
 #include "Brushes/SlateImageBrush.h"
 #include "Editor.h"
+#include "Engine/DataAsset.h"
 #include "Engine/Level.h"
+#include "Engine/SkeletalMesh.h"
+#include "Engine/StaticMesh.h"
 #include "Engine/World.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Framework/Commands/UIAction.h"
 #include "HAL/FileManager.h"
 #include "Interfaces/IPluginManager.h"
 #include "IStructureDetailsView.h"
+#include "Materials/MaterialInterface.h"
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
 #include "Misc/MessageDialog.h"
 #include "Modules/ModuleManager.h"
 #include "PropertyEditorModule.h"
+#include "Sound/SoundBase.h"
 #include "Styling/AppStyle.h"
 #include "Styling/SlateStyle.h"
 #include "Styling/SlateStyleRegistry.h"
@@ -58,6 +63,71 @@ namespace LevelProgressTrackerEditorPrivate
 	}
 
 	static FString NormalizeFolderRuleForMerge(const FString& InFolderPath);
+
+	static bool IsNiagaraAssetClass(const FTopLevelAssetPath& AssetClassPath)
+	{
+		return AssetClassPath.GetPackageName() == FName(TEXT("/Script/Niagara"));
+	}
+
+	static bool ShouldIncludeAssetByClass(const FAssetData& AssetData, const FLPTLevelRules* Rules)
+	{
+		if (!Rules)
+		{
+			return true;
+		}
+
+		const FLPTAssetClassFilter& ClassFilter = Rules->AssetClassFilter;
+		if (ClassFilter.bIncludeStaticMeshes &&
+			ClassFilter.bIncludeSkeletalMeshes &&
+			ClassFilter.bIncludeMaterials &&
+			ClassFilter.bIncludeNiagara &&
+			ClassFilter.bIncludeSounds &&
+			ClassFilter.bIncludeDataAssets)
+		{
+			return true;
+		}
+
+		bool bMatchesTrackedCategory = false;
+		bool bAllowed = true;
+
+		if (UClass* AssetClass = AssetData.GetClass(EResolveClass::Yes))
+		{
+			if (AssetClass->IsChildOf(UStaticMesh::StaticClass()))
+			{
+				bMatchesTrackedCategory = true;
+				bAllowed = ClassFilter.bIncludeStaticMeshes;
+			}
+			else if (AssetClass->IsChildOf(USkeletalMesh::StaticClass()))
+			{
+				bMatchesTrackedCategory = true;
+				bAllowed = ClassFilter.bIncludeSkeletalMeshes;
+			}
+			else if (AssetClass->IsChildOf(UMaterialInterface::StaticClass()))
+			{
+				bMatchesTrackedCategory = true;
+				bAllowed = ClassFilter.bIncludeMaterials;
+			}
+			else if (AssetClass->IsChildOf(USoundBase::StaticClass()))
+			{
+				bMatchesTrackedCategory = true;
+				bAllowed = ClassFilter.bIncludeSounds;
+			}
+			else if (AssetClass->IsChildOf(UDataAsset::StaticClass()))
+			{
+				bMatchesTrackedCategory = true;
+				bAllowed = ClassFilter.bIncludeDataAssets;
+			}
+		}
+
+		if (!bMatchesTrackedCategory && IsNiagaraAssetClass(AssetData.AssetClassPath))
+		{
+			bMatchesTrackedCategory = true;
+			bAllowed = ClassFilter.bIncludeNiagara;
+		}
+
+		// Unknown classes are not force-filtered to preserve backward-compatible behavior.
+		return !bMatchesTrackedCategory || bAllowed;
+	}
 
 	static FString BuildWorldPartitionExternalPackagePrefix(const FString& WorldPackagePath, const TCHAR* ExternalFolderName)
 	{
@@ -195,7 +265,8 @@ namespace LevelProgressTrackerEditorPrivate
 		IAssetRegistry& Registry,
 		const FName PackageName,
 		TSet<FSoftObjectPath>& UniquePaths,
-		TArray<FSoftObjectPath>& OutAssets
+		TArray<FSoftObjectPath>& OutAssets,
+		const FLPTLevelRules* Rules = nullptr
 	)
 	{
 		const FString PackageLongPath = PackageName.ToString();
@@ -216,6 +287,11 @@ namespace LevelProgressTrackerEditorPrivate
 		for (const FAssetData& AssetData : PackageAssets)
 		{
 			if (!AssetData.IsValid() || AssetData.HasAnyPackageFlags(PKG_EditorOnly))
+			{
+				continue;
+			}
+
+			if (!ShouldIncludeAssetByClass(AssetData, Rules))
 			{
 				continue;
 			}
@@ -268,6 +344,11 @@ namespace LevelProgressTrackerEditorPrivate
 					continue;
 				}
 
+				if (!ShouldIncludeAssetByClass(AssetData, &Rules))
+				{
+					continue;
+				}
+
 				if (AssetData.AssetClassPath == UWorld::StaticClass()->GetClassPathName())
 				{
 					continue;
@@ -295,7 +376,8 @@ namespace LevelProgressTrackerEditorPrivate
 		IAssetRegistry& Registry,
 		const FName RootPackageName,
 		TSet<FSoftObjectPath>& UniquePaths,
-		TArray<FSoftObjectPath>& OutAssets
+		TArray<FSoftObjectPath>& OutAssets,
+		const FLPTLevelRules* Rules = nullptr
 	)
 	{
 		TArray<FName> Dependencies;
@@ -308,7 +390,47 @@ namespace LevelProgressTrackerEditorPrivate
 
 		for (const FName DependencyPackageName : Dependencies)
 		{
-			AppendAssetsFromPackage(Registry, DependencyPackageName, UniquePaths, OutAssets);
+			AppendAssetsFromPackage(Registry, DependencyPackageName, UniquePaths, OutAssets, Rules);
+		}
+	}
+
+	static void AppendHardDependencyClosureAssets(
+		IAssetRegistry& Registry,
+		const TArray<FName>& RootPackageNames,
+		TSet<FSoftObjectPath>& UniquePaths,
+		TArray<FSoftObjectPath>& OutAssets,
+		const FLPTLevelRules* Rules = nullptr
+	)
+	{
+		TSet<FName> VisitedPackages;
+		TArray<FName> PendingPackages = RootPackageNames;
+
+		while (PendingPackages.Num() > 0)
+		{
+			const FName CurrentPackageName = PendingPackages.Pop(EAllowShrinking::No);
+			if (CurrentPackageName.IsNone() || VisitedPackages.Contains(CurrentPackageName))
+			{
+				continue;
+			}
+
+			VisitedPackages.Add(CurrentPackageName);
+			AppendAssetsFromPackage(Registry, CurrentPackageName, UniquePaths, OutAssets, Rules);
+
+			TArray<FName> Dependencies;
+			Registry.GetDependencies(
+				CurrentPackageName,
+				Dependencies,
+				UE::AssetRegistry::EDependencyCategory::Package,
+				UE::AssetRegistry::EDependencyQuery::Hard
+			);
+
+			for (const FName DependencyPackageName : Dependencies)
+			{
+				if (!DependencyPackageName.IsNone() && !VisitedPackages.Contains(DependencyPackageName))
+				{
+					PendingPackages.Add(DependencyPackageName);
+				}
+			}
 		}
 	}
 
@@ -772,6 +894,7 @@ namespace LevelProgressTrackerEditorPrivate
 		// Conflict order is Level first, then Global. Global values dominate on conflicting options.
 		Merged.AssetRules = MergeSoftObjectPaths(LevelRules.AssetRules, GlobalRules.AssetRules);
 		Merged.FolderRules = MergeFolderPaths(LevelRules.FolderRules, GlobalRules.FolderRules);
+		Merged.AssetClassFilter = GlobalRules.AssetClassFilter;
 		Merged.WorldPartitionDataLayerAssets = MergeDataLayerAssetRules(LevelRules.WorldPartitionDataLayerAssets, GlobalRules.WorldPartitionDataLayerAssets);
 		Merged.WorldPartitionRegions = MergeNameRules(LevelRules.WorldPartitionRegions, GlobalRules.WorldPartitionRegions);
 		Merged.WorldPartitionCells = MergeStringRules(LevelRules.WorldPartitionCells, GlobalRules.WorldPartitionCells);
@@ -1071,7 +1194,8 @@ void FLevelProgressTrackerEditorModule::RebuildLevelDependencies(UWorld* SavedWo
 	if (!bIsWorldPartition)
 	{
 		const FName LevelPackageName = FName(*SavedWorld->GetOutermost()->GetName());
-		LevelProgressTrackerEditorPrivate::AppendDirectDependenciesAssets(Registry, LevelPackageName, UniqueCandidateAssets, CandidateAssets);
+		const TArray<FName> RootPackages = { LevelPackageName };
+		LevelProgressTrackerEditorPrivate::AppendHardDependencyClosureAssets(Registry, RootPackages, UniqueCandidateAssets, CandidateAssets, &EffectiveRules);
 	}
 	else
 	{
@@ -1083,11 +1207,8 @@ void FLevelProgressTrackerEditorModule::RebuildLevelDependencies(UWorld* SavedWo
 
 		// World Partition scan uses ActorDesc metadata and AssetRegistry package dependencies only.
 		// It is independent from currently loaded editor actors.
-		for (const FName ActorPackageName : CandidateActorPackages)
-		{
-			LevelProgressTrackerEditorPrivate::AppendAssetsFromPackage(Registry, ActorPackageName, UniqueCandidateAssets, CandidateAssets);
-			LevelProgressTrackerEditorPrivate::AppendHardDependenciesAssets(Registry, ActorPackageName, UniqueCandidateAssets, CandidateAssets);
-		}
+		const TArray<FName> RootPackages = CandidateActorPackages.Array();
+		LevelProgressTrackerEditorPrivate::AppendHardDependencyClosureAssets(Registry, RootPackages, UniqueCandidateAssets, CandidateAssets, &EffectiveRules);
 
 		UE_LOG(LogTemp, Log, TEXT("LPT Editor: WP Candidates: %d"), CandidateAssets.Num());
 

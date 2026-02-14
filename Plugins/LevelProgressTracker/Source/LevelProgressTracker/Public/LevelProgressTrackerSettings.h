@@ -12,6 +12,40 @@
 class UDataLayerAsset;
 
 /**
+ * Class-category filter used for automatically collected preload candidates.
+ * Explicit asset rules are not affected by this filter.
+ */
+USTRUCT(BlueprintType)
+struct FLPTAssetClassFilter
+{
+	GENERATED_BODY()
+
+	/* Includes static mesh assets in auto-collected candidates. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Class Filter")
+	bool bIncludeStaticMeshes = true;
+
+	/* Includes skeletal mesh assets in auto-collected candidates. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Class Filter")
+	bool bIncludeSkeletalMeshes = true;
+
+	/* Includes material and material instance assets in auto-collected candidates. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Class Filter")
+	bool bIncludeMaterials = true;
+
+	/* Includes Niagara assets in auto-collected candidates. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Class Filter")
+	bool bIncludeNiagara = true;
+
+	/* Includes sound assets in auto-collected candidates. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Class Filter")
+	bool bIncludeSounds = true;
+
+	/* Includes data asset types in auto-collected candidates. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Class Filter")
+	bool bIncludeDataAssets = true;
+};
+
+/**
  * Filtering and World Partition generation rules used by a single level entry.
  */
 USTRUCT(BlueprintType)
@@ -34,6 +68,10 @@ struct FLPTLevelRules
 	/* Folder rules evaluated by long package name prefix match. Use Content Browser paths such as '/Game/Folder' or '/PluginName/Folder'. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Filtering", meta = (ContentDir, LongPackageName, ForceShowPluginContent))
 	TArray<FDirectoryPath> FolderRules;
+
+	/* Class-category filter used for automatically collected preload candidates. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Filtering")
+	FLPTAssetClassFilter AssetClassFilter;
 
 	/* Enables safe World Partition actor scan using only currently loaded actors. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Partition")
@@ -105,6 +143,10 @@ public:
 	/* These settings are used as default values when creating rules for a new level. They do not affect existing level entries. */
 	UPROPERTY(EditAnywhere, Config, Category = "Global Rule Defaults", meta = (ToolTip = "These settings are used as default values when creating rules for a new level. They do not affect existing level entries.", ContentDir, LongPackageName, ForceShowPluginContent))
 	TArray<FDirectoryPath> FolderRules;
+
+	/* These settings are used as default values when creating rules for a new level. They do not affect existing level entries. */
+	UPROPERTY(EditAnywhere, Config, Category = "Global Rule Defaults - Class Filter", meta = (ToolTip = "These settings are used as default values when creating rules for a new level. They do not affect existing level entries."))
+	FLPTAssetClassFilter AssetClassFilter;
 
 	/* These settings are used as default values when creating rules for a new level. They do not affect existing level entries. */
 	UPROPERTY(EditAnywhere, Config, Category = "Global Rule Defaults - WorldPartition", meta = (ToolTip = "These settings are used as default values when creating rules for a new level. They do not affect existing level entries."))
