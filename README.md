@@ -43,7 +43,10 @@ LPT is a plugin for Unreal Engine 5 that allows you to quickly and easily create
 ## How to use it?
 An interactive step-by-step tutorial on how to use LPT can be found in the file: `B_LPT_GameMode_Demo`, which is located at the path `Plugins\Level Progress Tracker Content\DemoFiles\`.
 
-<!-- ![Window Manager](./_Misc/Tutorial/Tutorial_1.jpg) -->
+![Level Progress Tracker](./_Misc/Tutorial/Slide_1.jpg)
+![Level Progress Tracker](./_Misc/Tutorial/Slide_2.jpg)
+![Level Progress Tracker](./_Misc/Tutorial/Slide_3.jpg)
+![Level Progress Tracker](./_Misc/Tutorial/Slide_4.jpg)
 
 ## (C++) Documentaion
 All sources contain self-documenting code.
