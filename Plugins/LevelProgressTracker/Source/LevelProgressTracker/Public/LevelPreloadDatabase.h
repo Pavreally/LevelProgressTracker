@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Engine/DataAsset.h"
-#include "LevelProgressTrackerSettings.h"
+#include "SettingsLPT.h"
 
 #include "LevelPreloadDatabase.generated.h"
 
@@ -58,3 +58,4 @@ public:
 	/** Updates level entry assets with deduplication and refreshes generation timestamp. */
 	bool UpdateEntryAssetsByLevel(const TSoftObjectPtr<UWorld>& Level, const TArray<FSoftObjectPath>& AssetPaths);
 };
+

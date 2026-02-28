@@ -11,12 +11,12 @@ LPT is a plugin for Unreal Engine 5 that allows you to quickly and easily create
 ## Latest Updates
 `Experimental`
 
-`Version 1.3.5`
-- Fixed a critical bug that caused the resource loading progress bar to not work in packaged games.
-- Improved the approach to working with World Partition levels.
-- Added a plugin global settings section in Project Settings.
-- Added a plugin preset button for the current level in the UE editor Toolbar.
-- Added extended recursion for asset parsing at the level and class filter.
+`Version 1.3.6`
+- Complete global code refactoring and optimization
+- Added widget filtering option
+- Fixed and significantly improved asset filtering logic during the level database list creation stage
+- Introduced the ability to manually set per-level asset preloading step size, allowing you to balance precision and performance individually for each level
+
 
 ## What it's for
 - Tracking the progress of level asset loading.
@@ -26,9 +26,18 @@ LPT is a plugin for Unreal Engine 5 that allows you to quickly and easily create
 - Automatic level type recognition: World Partition, Streaming Level, or regular.
 - Tracks the loading progress of both regular and streaming levels.
 - Automatically scans specified levels for assets and monitors their loading progress in real time.
+- Extremely flexible loading progress bar configuration.
+You can choose one of three approaches:
+<br> - fully automatic asset detection for the level.
+<br> - completely manual list of assets to load.
+<br> - or hybrid mode (automatic + manual overrides).
+
 - Optional resource loading. It can be disabled, but in that case, progress tracking for resource loading will not work. However, delegates for full level loading will still function.
 - Tracks level asset loading packages and their count.
 - Built-in functions for loading screens — simply add your UMG widget, and it will function as a Slate widget. This means that your specified UMG widget will not be forcibly closed during a level transition.
+- Powerful global asset filtering system located in Project Settings > Level Progress Tracker.
+You can add individual assets, entire folders, Data Layers or Cells either as exclusions (blacklist) or as allowed items only (whitelist / inverse mode).
+- Convenient branded plugin button that lets you quickly configure filtering rules specifically for the current level right from the editor.
 
 ## Install
 

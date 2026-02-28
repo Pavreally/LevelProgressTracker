@@ -1,6 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "LevelProgressTracker.h"
+#include "ModuleLPT.h"
 
 #define LOCTEXT_NAMESPACE "FLevelProgressTrackerModule"
 

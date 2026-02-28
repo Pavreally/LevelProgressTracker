@@ -1,6 +1,6 @@
 // Pavel Gornostaev <https://github.com/Pavreally>
 
-#include "LevelProgressTrackerSubsytem.h"
+#include "SubsytemLPT.h"
 #include "Engine/StreamableManager.h"
 
 
@@ -27,12 +27,8 @@ void ULevelProgressTrackerSubsytem::UnloadLevelInstanceLPT(const TSoftObjectPtr<
 		// Unloading streaming level
 		LevelState->LevelInstanceState.LevelReference->SetIsRequestingUnloadAndRemoval(true);
 
-		if (LevelState->Handle.IsValid())
-		{
-			LevelState->Handle->ReleaseHandle();
-			LevelState->Handle.Reset();
-			LevelName = LevelState->LevelName;
-		}
+		ReleaseLevelStateHandles(LevelState.ToSharedRef(), false);
+		LevelName = LevelState->LevelName;
 
 		LevelLoadedMap.Remove(PackagePath);
 	}
@@ -49,12 +45,7 @@ void ULevelProgressTrackerSubsytem::UnloadAllLevelInstanceLPT()
 
 		if (LevelState->LoadMethod == ELevelLoadMethod::LevelStreaming)
 		{
-			if (LevelState->Handle.IsValid())
-			{
-				LevelState->Handle->CancelHandle();
-				LevelState->Handle->ReleaseHandle();
-				LevelState->Handle.Reset();
-			}
+			ReleaseLevelStateHandles(LevelState.ToSharedRef(), true);
 
 			if (LevelState->LevelInstanceState.LevelReference)
 			{

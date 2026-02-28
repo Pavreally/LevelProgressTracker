@@ -1,6 +1,6 @@
 // Pavel Gornostaev <https://github.com/Pavreally>
 
-#include "SWidgetWrapLPT.h"
+#include "SlateWidgetWrapLPT.h"
 #include "Blueprint/UserWidget.h"
 #include "Engine/Engine.h"
 #include "Engine/GameViewportClient.h"
@@ -73,3 +73,4 @@ void SWidgetWrapLPT::UnloadSWidgetLPT()
 }
 
 END_SLATE_FUNCTION_BUILD_OPTIMIZATION
+

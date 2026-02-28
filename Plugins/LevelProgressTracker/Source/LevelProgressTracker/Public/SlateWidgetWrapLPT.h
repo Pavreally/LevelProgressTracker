@@ -34,3 +34,4 @@ private:
 	// Weak reference to the instance of the created UMG widget.
 	TWeakObjectPtr<UUserWidget> EmbeddedWidget;
 };
+

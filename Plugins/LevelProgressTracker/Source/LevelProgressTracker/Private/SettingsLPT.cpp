@@ -1,6 +1,6 @@
 // Pavel Gornostaev <https://github.com/Pavreally>
 
-#include "LevelProgressTrackerSettings.h"
+#include "SettingsLPT.h"
 #include "Misc/PackageName.h"
 #include "Modules/ModuleInterface.h"
 #include "Modules/ModuleManager.h"
@@ -97,6 +97,8 @@ void ULevelProgressTrackerSettings::BuildGlobalDefaultRules(FLPTLevelRules& OutR
 	OutRules.bUseExclusionMode = bUseExclusionMode;
 	OutRules.AssetRules = AssetRules;
 	OutRules.FolderRules = FolderRules;
+	OutRules.bUseChunkedPreload = bUseChunkedPreload;
+	OutRules.PreloadChunkSize = FMath::Max(1, PreloadChunkSize);
 	OutRules.AssetClassFilter = AssetClassFilter;
 	OutRules.bAllowWorldPartitionAutoScan = bAllowWorldPartitionAutoScan;
 	OutRules.WorldPartitionDataLayerAssets = WorldPartitionDataLayerAssets;
@@ -121,4 +123,5 @@ void ULevelProgressTrackerSettings::OpenLevelRulesEditorForCurrentLevel()
 	OnOpenLevelRulesEditorRequested.Broadcast(this);
 #endif
 }
+
 

@@ -1,6 +1,6 @@
 // Pavel Gornostaev <https://github.com/Pavreally>
 
-#include "LevelProgressTrackerSubsytem.h"
+#include "SubsytemLPT.h"
 #include "LevelPreloadDatabase.h"
 #include "Engine/StreamableManager.h"
 #include "Engine/AssetManager.h"
@@ -113,6 +113,9 @@ void ULevelProgressTrackerSubsytem::StartPreloadingResources(FName PackagePath, 
 		return;
 	}
 
+	LevelState->bUseChunkedPreload = LevelEntry->Rules.bUseChunkedPreload;
+	LevelState->PreloadChunkSize = FMath::Max(1, LevelEntry->Rules.PreloadChunkSize);
+
 	TArray<FSoftObjectPath> Paths;
 	TSet<FSoftObjectPath> UniquePaths;
 	Paths.Reserve(LevelEntry->Assets.Num());
@@ -131,11 +134,22 @@ void ULevelProgressTrackerSubsytem::StartPreloadingResources(FName PackagePath, 
 	// Setup load stat
 	LevelState->TotalAssets = Paths.Num();
 	LevelState->LoadedAssets = 0;
+	LevelState->PreloadPaths.Reset();
+	LevelState->NextPreloadPathIndex = 0;
+	LevelState->ChunkHandles.Reset();
 
 	if (Paths.IsEmpty())
 	{
 		OnLevelLoadProgressLPT.Broadcast(LevelState->LevelSoftPtr, LevelState->LevelName, 1.f, 0, 0);
 		StartLevelLPT(PackagePath, bIsStreamingLevel, LevelState);
+		return;
+	}
+
+	if (LevelState->bUseChunkedPreload)
+	{
+		LevelState->PreloadPaths = MoveTemp(Paths);
+		LevelState->NextPreloadPathIndex = 0;
+		StartNextPreloadChunk(PackagePath, bIsStreamingLevel, LevelState);
 		return;
 	}
 
@@ -175,6 +189,71 @@ void ULevelProgressTrackerSubsytem::StartPreloadingResources(FName PackagePath, 
 	}
 }
 
+void ULevelProgressTrackerSubsytem::StartNextPreloadChunk(FName PackagePath, bool bIsStreamingLevel, TSharedRef<FLevelState> LevelState)
+{
+	if (!LevelState->bUseChunkedPreload)
+	{
+		return;
+	}
+
+	if (LevelState->NextPreloadPathIndex >= LevelState->PreloadPaths.Num())
+	{
+		OnAllAssetsLoaded(PackagePath, bIsStreamingLevel, LevelState);
+		return;
+	}
+
+	const int32 RemainingAssets = LevelState->PreloadPaths.Num() - LevelState->NextPreloadPathIndex;
+	const int32 ChunkAssetCount = FMath::Clamp(LevelState->PreloadChunkSize, 1, RemainingAssets);
+	const int32 ChunkBaseLoaded = LevelState->LoadedAssets;
+
+	TArray<FSoftObjectPath> ChunkPaths;
+	ChunkPaths.Reserve(ChunkAssetCount);
+
+	for (int32 Index = 0; Index < ChunkAssetCount; ++Index)
+	{
+		ChunkPaths.Add(LevelState->PreloadPaths[LevelState->NextPreloadPathIndex + Index]);
+	}
+
+	LevelState->NextPreloadPathIndex += ChunkAssetCount;
+
+	FStreamableManager& StreamableManager = UAssetManager::Get().GetStreamableManager();
+	TSharedPtr<FStreamableHandle> Handle = StreamableManager.RequestAsyncLoad(
+		ChunkPaths,
+		FStreamableDelegate::CreateUObject(
+			this,
+			&ULevelProgressTrackerSubsytem::OnPreloadChunkLoaded,
+			PackagePath,
+			bIsStreamingLevel,
+			LevelState,
+			ChunkAssetCount),
+		FStreamableManager::AsyncLoadHighPriority
+	);
+
+	if (!Handle.IsValid())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("LPT (StartNextPreloadChunk): Failed to create chunk streamable handle for level '%s'."), *PackagePath.ToString());
+
+		LevelState->LoadedAssets = FMath::Clamp(ChunkBaseLoaded + ChunkAssetCount, 0, LevelState->TotalAssets);
+		const float Progress = LevelState->TotalAssets > 0 ? static_cast<float>(LevelState->LoadedAssets) / LevelState->TotalAssets : 1.f;
+		OnLevelLoadProgressLPT.Broadcast(LevelState->LevelSoftPtr, LevelState->LevelName, Progress, LevelState->LoadedAssets, LevelState->TotalAssets);
+
+		StartNextPreloadChunk(PackagePath, bIsStreamingLevel, LevelState);
+		return;
+	}
+
+	Handle->BindUpdateDelegate(FStreamableUpdateDelegate::CreateUObject(
+		this,
+		&ULevelProgressTrackerSubsytem::HandleChunkAssetLoaded,
+		PackagePath,
+		LevelState,
+		ChunkBaseLoaded,
+		ChunkAssetCount
+	));
+
+	LevelState->ChunkHandles.Add(Handle);
+	LevelState->Handle = Handle;
+}
+
 void ULevelProgressTrackerSubsytem::StartLevelLPT(FName PackagePath, bool bIsStreamingLevel, TSharedRef<FLevelState> LevelState)
 {
 	if (bIsStreamingLevel)
@@ -210,3 +289,4 @@ void ULevelProgressTrackerSubsytem::StartLevelLPT(FName PackagePath, bool bIsStr
 		UGameplayStatics::OpenLevel(this, PackagePath);
 	}
 }
+

@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "UObject/Object.h"
-#include "LevelProgressTrackerSettings.h"
+#include "SettingsLPT.h"
 
 #include "LevelPreloadAssetFilter.generated.h"
 
@@ -47,3 +47,4 @@ public:
 		FSoftObjectPath& OutDatabaseObjectPath
 	);
 };
+

@@ -1,7 +1,7 @@
 // Pavel Gornostaev <https://github.com/Pavreally>
 
 #include "LevelPreloadAssetFilter.h"
-#include "LevelProgressTrackerSettings.h"
+#include "SettingsLPT.h"
 
 
 namespace LevelPreloadAssetFilterPrivate
@@ -288,3 +288,4 @@ bool ULevelPreloadAssetFilter::ResolveDatabaseAssetPath(
 	FString DatabaseFolderLongPath;
 	return Settings->ResolveDatabaseAssetPaths(DatabaseFolderLongPath, OutDatabasePackagePath, OutDatabaseObjectPath);
 }
+

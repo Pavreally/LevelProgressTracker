@@ -29,7 +29,7 @@
 #include "Engine/LevelStreamingDynamic.h"
 #include "UObject/SoftObjectPath.h"
 
-#include "LevelProgressTrackerSubsytem.generated.h"
+#include "SubsytemLPT.generated.h"
 
 struct FStreamableHandle;
 class SWidgetWrapLPT;
@@ -80,6 +80,21 @@ public:
 	FName LevelName;
 
 	TSharedPtr<FStreamableHandle> Handle;
+
+	// Runtime preload mode. True uses chunked requests, false uses a single aggregated request.
+	bool bUseChunkedPreload = true;
+
+	// Number of assets requested per chunk when bUseChunkedPreload is enabled.
+	int32 PreloadChunkSize = 32;
+
+	// Full preload path list used by chunked mode.
+	TArray<FSoftObjectPath> PreloadPaths;
+
+	// Current index in PreloadPaths for the next chunk.
+	int32 NextPreloadPathIndex = 0;
+
+	// Chunk handles retained until level open to keep preloaded assets referenced.
+	TArray<TSharedPtr<FStreamableHandle>> ChunkHandles;
 	
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "LPT Subsystem", meta = (ToolTip = "Total assets the target level contains."))
 	int32 TotalAssets = 0;
@@ -211,11 +226,20 @@ private:
 	// Callback when all loads are complete.
 	void OnAllAssetsLoaded(FName PackagePath, bool bIsStreamingLevel, TSharedRef<FLevelState> LevelState);
 
+	// Callback when one chunk load is complete.
+	void OnPreloadChunkLoaded(FName PackagePath, bool bIsStreamingLevel, TSharedRef<FLevelState> LevelState, int32 LoadedChunkAssetCount);
+
 	// Сallback when the global level is fully loaded.
 	void OnPostLoadMapWithWorld(UWorld* LoadedWorld);
 
 	// Callback when loading each asset.
 	void HandleAssetLoaded(TSharedRef<FStreamableHandle> Handle, FName PackagePath, TSharedRef<FLevelState> LevelState);
+
+	// Callback when loading chunk assets.
+	void HandleChunkAssetLoaded(TSharedRef<FStreamableHandle> Handle, FName PackagePath, TSharedRef<FLevelState> LevelState, int32 ChunkBaseLoaded, int32 ChunkAssetCount);
+
+	// Releases all streamable handles associated with a level state.
+	void ReleaseLevelStateHandles(TSharedRef<FLevelState> LevelState, bool bCancelHandles);
 
 	// Request to open a game level
 	void StartLevelLPT(FName PackagePath, bool bIsStreamingLevel, TSharedRef<FLevelState> LevelState);
@@ -229,7 +253,11 @@ private:
 	 */
 	void StartPreloadingResources(FName PackagePath, const TSoftObjectPtr<UWorld>& LevelSoftPtr, TSharedRef<FLevelState>& LevelState, bool bIsStreamingLevel);
 
+	// Starts loading the next chunk for chunked preload mode.
+	void StartNextPreloadChunk(FName PackagePath, bool bIsStreamingLevel, TSharedRef<FLevelState> LevelState);
+
 	// Call after loading the streaming level
 	UFUNCTION()
 	void OnLevelShown();
 };
+

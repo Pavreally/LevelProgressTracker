@@ -7,7 +7,7 @@
 #include "Engine/EngineTypes.h"
 #include "UObject/SoftObjectPath.h"
 
-#include "LevelProgressTrackerSettings.generated.h"
+#include "SettingsLPT.generated.h"
 
 class UDataLayerAsset;
 
@@ -28,7 +28,7 @@ struct FLPTAssetClassFilter
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Class Filter")
 	bool bIncludeSkeletalMeshes = true;
 
-	/* Includes material and material instance assets in auto-collected candidates. */
+	/* Includes material-related assets (materials, material instances/functions/collections, textures) in auto-collected candidates. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Class Filter")
 	bool bIncludeMaterials = true;
 
@@ -39,6 +39,10 @@ struct FLPTAssetClassFilter
 	/* Includes sound assets in auto-collected candidates. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Class Filter")
 	bool bIncludeSounds = true;
+
+	/* Includes Widget Blueprint assets in auto-collected candidates. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Class Filter")
+	bool bIncludeWidgets = true;
 
 	/* Includes data asset types in auto-collected candidates. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Class Filter")
@@ -72,6 +76,14 @@ struct FLPTLevelRules
 	/* Folder rules evaluated by long package name prefix match. Use Content Browser paths such as '/Game/Folder' or '/PluginName/Folder'. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Filtering", meta = (ContentDir, LongPackageName, ForceShowPluginContent))
 	TArray<FDirectoryPath> FolderRules;
+
+	/* If true, preload assets are requested in chunks. If false, all assets are requested as one aggregated batch. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preload Progress", meta = (ToolTip = "If true, preload assets are requested in chunks. If false, all assets are requested as one aggregated batch."))
+	bool bUseChunkedPreload = true;
+
+	/* Number of assets per preload chunk. 1 means per-asset loading; larger values batch assets to reduce overhead. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preload Progress", meta = (ClampMin = "1", UIMin = "1", ToolTip = "Number of assets per preload chunk. 1 means per-asset loading; larger values batch assets into groups for better performance."))
+	int32 PreloadChunkSize = 32;
 
 	/* Enables safe World Partition actor scan using only currently loaded actors. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Partition")
@@ -148,6 +160,14 @@ public:
 	UPROPERTY(EditAnywhere, Config, Category = "Global Rule Defaults", meta = (ToolTip = "Folder rules evaluated by long package name prefix match. Use Content Browser paths such as '/Game/Folder' or '/PluginName/Folder'.", ContentDir, LongPackageName, ForceShowPluginContent))
 	TArray<FDirectoryPath> FolderRules;
 
+	/* If true, preload assets are requested in chunks. If false, all assets are requested as one aggregated batch. */
+	UPROPERTY(EditAnywhere, Config, Category = "Global Rule Defaults - Preload Progress", meta = (ToolTip = "If true, preload assets are requested in chunks. If false, all assets are requested as one aggregated batch."))
+	bool bUseChunkedPreload = true;
+
+	/* Number of assets per preload chunk. 1 means per-asset loading; larger values batch assets to reduce overhead. */
+	UPROPERTY(EditAnywhere, Config, Category = "Global Rule Defaults - Preload Progress", meta = (ClampMin = "1", UIMin = "1", ToolTip = "Number of assets per preload chunk. 1 means per-asset loading; larger values batch assets into groups for better performance."))
+	int32 PreloadChunkSize = 32;
+
 	/* Enables safe World Partition actor scan using only currently loaded actors. */
 	UPROPERTY(EditAnywhere, Config, Category = "Global Rule Defaults - WorldPartition", meta = (ToolTip = "Enables safe World Partition actor scan using only currently loaded actors."))
 	bool bAllowWorldPartitionAutoScan = false;
@@ -164,3 +184,4 @@ public:
 	UPROPERTY(EditAnywhere, Config, Category = "Global Rule Defaults - WorldPartition", meta = (DisplayName = "Cell Rules", ToolTip = "World Partition cell tokens evaluated by long package name substring match."))
 	TArray<FString> WorldPartitionCells;
 };
+

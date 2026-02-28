@@ -1,15 +1,15 @@
 // Pavel Gornostaev <https://github.com/Pavreally>
 
-#include "LevelProgressTrackerSubsytem.h"
+#include "SubsytemLPT.h"
 #include "LevelPreloadAssetFilter.h"
 #include "LevelPreloadDatabase.h"
-#include "LevelProgressTrackerSettings.h"
+#include "SettingsLPT.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "Engine/GameViewportClient.h"
 #include "Engine/StreamableManager.h"
 #include "UObject/Package.h"
-#include "SWidgetWrapLPT.h"
+#include "SlateWidgetWrapLPT.h"
 
 
 #pragma region SUBSYSTEM
@@ -75,12 +75,9 @@ void ULevelProgressTrackerSubsytem::OnPostLoadMapWithWorld(UWorld* LoadedWorld)
 		// Reset handler if level is not streaming
 		if (LevelState && LevelState->LoadMethod != ELevelLoadMethod::LevelStreaming)
 		{
-			if (LevelState->Handle.IsValid())
-			{
-				// Releasing the resource level handler and finishing tracking him
-				LevelState->Handle->ReleaseHandle();
-				LevelState->Handle.Reset();
-			}
+			// Releasing resource preload handles and finishing tracking.
+			ReleaseLevelStateHandles(LevelState.ToSharedRef(), false);
+
 			// Streaming level loading notification
 			OnLevelLoadedLPT.Broadcast(LevelState->LevelSoftPtr, LevelState->LevelName);
 			// Clear memory from unnecessary data
@@ -119,3 +116,5 @@ bool ULevelProgressTrackerSubsytem::CheckingPIE()
 	
 	return World && World->IsPlayInEditor();
 }
+
+
