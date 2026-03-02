@@ -5,19 +5,17 @@
 #include "CoreMinimal.h"
 #include "Templates/Function.h"
 
-class ULevelPreloadDatabase;
 class UWorld;
+class ULevelPreloadDatabaseLPT;
 
 namespace SlateWidgetLPT
 {
-	bool PromptCreateLevelRules(bool& bApplyGlobalDefaults);
-
 	void OpenLevelRulesWindow(
-		ULevelPreloadDatabase* DatabaseAsset,
+		ULevelPreloadDatabaseLPT* DatabaseAsset,
 		const TSoftObjectPtr<UWorld>& LevelSoftPtr,
 		const FString& LevelDisplayName,
 		bool bIsWorldPartition,
-		const TFunction<bool(ULevelPreloadDatabase*)>& SaveDatabaseAssetFn
+		const TFunction<bool(ULevelPreloadDatabaseLPT*)>& SaveDatabaseAssetFn
 	);
 }
 

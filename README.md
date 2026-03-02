@@ -11,11 +11,22 @@ LPT is a plugin for Unreal Engine 5 that allows you to quickly and easily create
 ## Latest Updates
 `Experimental`
 
-`Version 1.3.6`
-- Complete global code refactoring and optimization
-- Added widget filtering option
-- Fixed and significantly improved asset filtering logic during the level database list creation stage
-- Introduced the ability to manually set per-level asset preloading step size, allowing you to balance precision and performance individually for each level
+`Version 1.4.0`
+- The plugin has been upgraded to a new major version due to a significant overhaul of the asset filtering setup approach and the addition of much more flexible support for World Partition levels.
+- All configuration settings are now stored in dedicated Data Assets, unique to each level.
+This greatly improves optimization and management when working with a large number of game levels.
+- Added more flexible configuration of storage paths for asset lists and their filtering rules.
+- For World Partition levels, Asset Collections have been introduced.
+This means that for each Data Layer, you can now pre-create an asset collection and preload it procedurally — even before the level is opened — in a already packaged, shipping build of the game.
+During level loading, you can load these collections either
+<br> - by tag (loading an entire group at once), or
+<br> - individually by specific keys.
+<br>Example use case: In one session you can preload the boss arena section ahead of time, while in the next session you preload the checkpoint area instead.
+
+- Complete global code refactoring and optimization.
+- Added widget filtering option.
+- Fixed and significantly improved asset filtering logic during the level database list creation stage.
+- Introduced the ability to manually set per-level asset preloading step size, allowing you to balance precision and performance individually for each level.
 
 
 ## What it's for
@@ -25,7 +36,6 @@ LPT is a plugin for Unreal Engine 5 that allows you to quickly and easily create
 - Ultra-fast setup and creation of a loading screen for level transitions.
 - Automatic level type recognition: World Partition, Streaming Level, or regular.
 - Tracks the loading progress of both regular and streaming levels.
-- Automatically scans specified levels for assets and monitors their loading progress in real time.
 - Extremely flexible loading progress bar configuration.
 You can choose one of three approaches:
 <br> - fully automatic asset detection for the level.
@@ -35,9 +45,8 @@ You can choose one of three approaches:
 - Optional resource loading. It can be disabled, but in that case, progress tracking for resource loading will not work. However, delegates for full level loading will still function.
 - Tracks level asset loading packages and their count.
 - Built-in functions for loading screens — simply add your UMG widget, and it will function as a Slate widget. This means that your specified UMG widget will not be forcibly closed during a level transition.
-- Powerful global asset filtering system located in Project Settings > Level Progress Tracker.
-You can add individual assets, entire folders, Data Layers or Cells either as exclusions (blacklist) or as allowed items only (whitelist / inverse mode).
-- Convenient branded plugin button that lets you quickly configure filtering rules specifically for the current level right from the editor.
+- Powerful global asset filtering system. You can add individual assets, entire folders, Data Layers or Cells either as exclusions (blacklist) or as allowed items only (whitelist / inverse mode).
+- Convenient plugin button that lets you quickly configure filtering rules specifically for the current level right from the editor.
 
 ## Install
 

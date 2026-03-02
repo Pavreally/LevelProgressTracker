@@ -7,7 +7,7 @@
 
 class UPackage;
 class UWorld;
-class ULevelPreloadDatabase;
+class ULevelPreloadDatabaseLPT;
 class ULevelProgressTrackerSettings;
 class FObjectPostSaveContext;
 class FSlateStyleSet;
@@ -28,10 +28,9 @@ private:
 	void HandleToolbarOpenLevelRulesClicked();
 	void HandleOpenLevelRulesEditorRequested(ULevelProgressTrackerSettings* Settings);
 	bool TryGetCurrentEditorLevel(TSoftObjectPtr<UWorld>& OutLevelSoftPtr, FString& OutLevelPackagePath, FString& OutLevelDisplayName, bool& bIsWorldPartition) const;
-	bool PromptCreateLevelRules(bool& bApplyGlobalDefaults) const;
-	void OpenLevelRulesWindow(ULevelPreloadDatabase* DatabaseAsset, const TSoftObjectPtr<UWorld>& LevelSoftPtr, const FString& LevelDisplayName, bool bIsWorldPartition);
-	ULevelPreloadDatabase* GetOrCreateDatabaseAsset(const ULevelProgressTrackerSettings* Settings) const;
-	bool SaveDatabaseAsset(ULevelPreloadDatabase* DatabaseAsset) const;
+	void OpenLevelRulesWindow(ULevelPreloadDatabaseLPT* DatabaseAsset, const TSoftObjectPtr<UWorld>& LevelSoftPtr, const FString& LevelDisplayName, bool bIsWorldPartition);
+	ULevelPreloadDatabaseLPT* GetOrCreateDatabaseAsset(const ULevelProgressTrackerSettings* Settings) const;
+	bool SaveDatabaseAsset(ULevelPreloadDatabaseLPT* DatabaseAsset) const;
 
 	TSharedPtr<FSlateStyleSet> StyleSet;
 #endif

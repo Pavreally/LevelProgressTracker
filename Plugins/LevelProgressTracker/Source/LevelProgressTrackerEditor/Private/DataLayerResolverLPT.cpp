@@ -105,7 +105,7 @@ namespace DataLayerResolverLPT
 		}
 	}
 
-	void ResolveWorldPartitionRegionRulesAsDataLayers(UWorld* World, FLPTLevelRules& InOutRules)
+	void ResolveWorldPartitionRegionRulesAsDataLayers(UWorld* World, FLPTFilterSettings& InOutRules)
 	{
 		if (!World || (InOutRules.WorldPartitionDataLayerAssets.IsEmpty() && InOutRules.WorldPartitionRegions.IsEmpty()))
 		{

@@ -71,7 +71,7 @@ namespace AssetFilterLPT
 		}
 	}
 
-	bool ShouldIncludeAssetByClass(const FAssetData& AssetData, const FLPTLevelRules* Rules)
+	bool ShouldIncludeAssetByClass(const FAssetData& AssetData, const FLPTFilterSettings* Rules)
 	{
 		if (!Rules)
 		{
@@ -295,18 +295,17 @@ namespace AssetFilterLPT
 		return Merged;
 	}
 
-	FLPTLevelRules BuildMergedRulesWithGlobalDominance(const FLPTLevelRules& LevelRules, const ULevelProgressTrackerSettings* Settings)
+	FLPTFilterSettings BuildMergedRulesWithGlobalDominance(const FLPTFilterSettings& LevelRules, const ULevelProgressTrackerSettings* Settings)
 	{
 		if (!Settings)
 		{
 			return LevelRules;
 		}
 
-		FLPTLevelRules GlobalRules;
+		FLPTFilterSettings GlobalRules;
 		Settings->BuildGlobalDefaultRules(GlobalRules);
 
-		FLPTLevelRules Merged = LevelRules;
-		Merged.bRulesInitializedFromGlobalDefaults = true;
+		FLPTFilterSettings Merged = LevelRules;
 
 		// Conflict order is Level first, then Global. Global values dominate on conflicting options.
 		Merged.AssetRules = MergeSoftObjectPaths(LevelRules.AssetRules, GlobalRules.AssetRules);

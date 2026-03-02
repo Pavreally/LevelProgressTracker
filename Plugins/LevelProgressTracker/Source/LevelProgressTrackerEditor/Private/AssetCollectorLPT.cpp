@@ -56,7 +56,7 @@ namespace AssetCollectorLPT
 			const FName PackageName,
 			TSet<FSoftObjectPath>& UniquePaths,
 			TArray<FSoftObjectPath>& OutAssets,
-			const FLPTLevelRules* Rules = nullptr
+			const FLPTFilterSettings* Rules = nullptr
 		)
 		{
 			const FString PackageLongPath = PackageName.ToString();
@@ -119,7 +119,7 @@ namespace AssetCollectorLPT
 			const FName RootPackageName,
 			TSet<FSoftObjectPath>& UniquePaths,
 			TArray<FSoftObjectPath>& OutAssets,
-			const FLPTLevelRules* Rules = nullptr
+			const FLPTFilterSettings* Rules = nullptr
 		)
 		{
 			TArray<FName> Dependencies;
@@ -160,7 +160,7 @@ namespace AssetCollectorLPT
 
 	void AppendFolderRuleCandidates(
 		IAssetRegistry& Registry,
-		const FLPTLevelRules& Rules,
+		const FLPTFilterSettings& Rules,
 		TSet<FSoftObjectPath>& UniquePaths,
 		TArray<FSoftObjectPath>& OutAssets
 	)
@@ -216,7 +216,7 @@ namespace AssetCollectorLPT
 		const TArray<FName>& RootPackageNames,
 		TSet<FSoftObjectPath>& UniquePaths,
 		TArray<FSoftObjectPath>& OutAssets,
-		const FLPTLevelRules* Rules
+		const FLPTFilterSettings* Rules
 	)
 	{
 		TSet<FName> VisitedPackages;
@@ -252,7 +252,7 @@ namespace AssetCollectorLPT
 	}
 
 	void AppendExplicitAssetRuleCandidates(
-		const FLPTLevelRules& Rules,
+		const FLPTFilterSettings& Rules,
 		TSet<FSoftObjectPath>& UniquePaths,
 		TArray<FSoftObjectPath>& OutAssets
 	)
@@ -275,7 +275,7 @@ namespace AssetCollectorLPT
 		}
 	}
 
-	void CollectWorldPartitionActorPackages(UWorld* World, const FLPTLevelRules& Rules, TSet<FName>& InOutCandidateActorPackages)
+	void CollectWorldPartitionActorPackages(UWorld* World, const FLPTFilterSettings& Rules, TSet<FName>& InOutCandidateActorPackages)
 	{
 		if (!World)
 		{
@@ -291,7 +291,7 @@ namespace AssetCollectorLPT
 			return;
 		}
 
-		FLPTLevelRules NormalizedRules = Rules;
+		FLPTFilterSettings NormalizedRules = Rules;
 		if (NormalizedRules.WorldPartitionRegions.Num() > 0)
 		{
 			TArray<FName> ExpandedRegionRules;
@@ -305,7 +305,7 @@ namespace AssetCollectorLPT
 
 		// Data Layer/Cell rules define actor scan scope for WP regardless of asset include/exclude mode.
 		// Exclusion mode is applied later only to asset/folder rules on collected candidates.
-		FLPTLevelRules ActorScopeRules = NormalizedRules;
+		FLPTFilterSettings ActorScopeRules = NormalizedRules;
 		ActorScopeRules.bUseExclusionMode = false;
 
 		FWorldPartitionHelpers::ForEachActorDescInstance(WorldPartition, [&InOutCandidateActorPackages, &ActorScopeRules](const FWorldPartitionActorDescInstance* ActorDescInstance)

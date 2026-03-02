@@ -11,7 +11,7 @@ class ULevelProgressTrackerSettings;
 
 namespace AssetFilterLPT
 {
-	bool ShouldIncludeAssetByClass(const FAssetData& AssetData, const FLPTLevelRules* Rules);
+	bool ShouldIncludeAssetByClass(const FAssetData& AssetData, const FLPTFilterSettings* Rules);
 
 	TArray<FSoftObjectPath> MergeSoftObjectPaths(
 		const TArray<FSoftObjectPath>& LevelPaths,
@@ -32,6 +32,6 @@ namespace AssetFilterLPT
 
 	TArray<FString> MergeStringRules(const TArray<FString>& LevelRules, const TArray<FString>& GlobalRules);
 
-	FLPTLevelRules BuildMergedRulesWithGlobalDominance(const FLPTLevelRules& LevelRules, const ULevelProgressTrackerSettings* Settings);
+	FLPTFilterSettings BuildMergedRulesWithGlobalDominance(const FLPTFilterSettings& LevelRules, const ULevelProgressTrackerSettings* Settings);
 }
 

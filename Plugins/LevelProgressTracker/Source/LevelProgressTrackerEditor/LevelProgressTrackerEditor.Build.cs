@@ -21,6 +21,7 @@ public class LevelProgressTrackerEditor : ModuleRules
 			{
 				"CoreUObject",
 				"Engine",
+				"GameplayTags",
 				"UnrealEd",
 				"AssetRegistry",
 				"Slate",

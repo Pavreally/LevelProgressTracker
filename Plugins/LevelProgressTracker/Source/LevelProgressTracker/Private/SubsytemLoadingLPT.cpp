@@ -1,13 +1,110 @@
 // Pavel Gornostaev <https://github.com/Pavreally>
 
 #include "SubsytemLPT.h"
-#include "LevelPreloadDatabase.h"
+#include "LevelPreloadDatabaseLPT.h"
+#include "AssetCollectionDataLPT.h"
+#include "AssetFilterSettingsLPT.h"
 #include "Engine/StreamableManager.h"
 #include "Engine/AssetManager.h"
 #include "Kismet/GameplayStatics.h"
 
+namespace
+{
+	const FName DefaultCollectionKey(TEXT("Default"));
+
+	void SelectCollectionsForLoad(
+		const FLevelPreloadEntryLPT& LevelEntry,
+		const FLPTLoadOptions& LoadOptions,
+		TArray<UAssetCollectionDataLPT*>& OutSelectedCollections)
+	{
+		OutSelectedCollections.Reset();
+
+		TSet<FSoftObjectPath> UniqueCollectionPaths;
+		TSet<FName> RequestedCollectionKeys;
+		RequestedCollectionKeys.Reserve(LoadOptions.CollectionKeys.Num());
+		for (const FName RequestedKey : LoadOptions.CollectionKeys)
+		{
+			if (!RequestedKey.IsNone())
+			{
+				RequestedCollectionKeys.Add(RequestedKey);
+			}
+		}
+
+		const bool bUseCollectionKeySelection = RequestedCollectionKeys.Num() > 0;
+		const bool bUseGroupTagSelection = !bUseCollectionKeySelection && !LoadOptions.GroupTags.IsEmpty();
+
+		for (const TSoftObjectPtr<UAssetCollectionDataLPT>& CollectionRef : LevelEntry.Collections)
+		{
+			const FSoftObjectPath CollectionPath = CollectionRef.ToSoftObjectPath();
+			if (!CollectionPath.IsValid() || UniqueCollectionPaths.Contains(CollectionPath))
+			{
+				continue;
+			}
+
+			UAssetCollectionDataLPT* CollectionAsset = CollectionRef.LoadSynchronous();
+			if (!CollectionAsset)
+			{
+				continue;
+			}
+
+			bool bShouldUseCollection = false;
+			if (bUseCollectionKeySelection)
+			{
+				bShouldUseCollection = RequestedCollectionKeys.Contains(CollectionAsset->CollectionKey);
+			}
+			else if (bUseGroupTagSelection)
+			{
+				bShouldUseCollection = CollectionAsset->GroupTags.HasAny(LoadOptions.GroupTags);
+			}
+			else
+			{
+				bShouldUseCollection = CollectionAsset->CollectionKey == DefaultCollectionKey;
+			}
+
+			if (!bShouldUseCollection)
+			{
+				continue;
+			}
+
+			UniqueCollectionPaths.Add(CollectionPath);
+			OutSelectedCollections.Add(CollectionAsset);
+		}
+	}
+
+	void MergeCollectionAssetLists(
+		const TArray<UAssetCollectionDataLPT*>& Collections,
+		TArray<FSoftObjectPath>& OutMergedPaths)
+	{
+		OutMergedPaths.Reset();
+
+		TSet<FSoftObjectPath> UniquePaths;
+		for (const UAssetCollectionDataLPT* CollectionAsset : Collections)
+		{
+			if (!CollectionAsset)
+			{
+				continue;
+			}
+
+			for (const FSoftObjectPath& AssetPath : CollectionAsset->AssetList)
+			{
+				if (!AssetPath.IsValid() || UniquePaths.Contains(AssetPath))
+				{
+					continue;
+				}
+
+				UniquePaths.Add(AssetPath);
+				OutMergedPaths.Add(AssetPath);
+			}
+		}
+	}
+}
 
 void ULevelProgressTrackerSubsytem::OpenLevelLPT(const TSoftObjectPtr<UWorld> LevelSoftPtr, bool PreloadingResources)
+{
+	OpenLevelLPT(LevelSoftPtr, PreloadingResources, FLPTLoadOptions());
+}
+
+void ULevelProgressTrackerSubsytem::OpenLevelLPT(const TSoftObjectPtr<UWorld> LevelSoftPtr, bool PreloadingResources, const FLPTLoadOptions& LoadOptions)
 {
 	if (LevelSoftPtr.IsNull())
 	{
@@ -17,10 +114,15 @@ void ULevelProgressTrackerSubsytem::OpenLevelLPT(const TSoftObjectPtr<UWorld> Le
 	}
 
 	// Preloads the target level's resources, waits for all resources to load, and starts the level itself.
-	AsyncLoadAssetsLPT(LevelSoftPtr, PreloadingResources);
+	AsyncLoadAssetsLPT(LevelSoftPtr, PreloadingResources, false, FLevelInstanceState(), LoadOptions);
 }
 
 void ULevelProgressTrackerSubsytem::LoadLevelInstanceLPT(TSoftObjectPtr<UWorld> LevelSoftPtr, const FTransform Transform, TSubclassOf<ULevelStreamingDynamic> OptionalLevelStreamingClass, bool bLoadAsTempPackage, bool PreloadingResources)
+{
+	LoadLevelInstanceLPT(LevelSoftPtr, Transform, OptionalLevelStreamingClass, bLoadAsTempPackage, PreloadingResources, FLPTLoadOptions());
+}
+
+void ULevelProgressTrackerSubsytem::LoadLevelInstanceLPT(TSoftObjectPtr<UWorld> LevelSoftPtr, const FTransform Transform, TSubclassOf<ULevelStreamingDynamic> OptionalLevelStreamingClass, bool bLoadAsTempPackage, bool PreloadingResources, const FLPTLoadOptions& LoadOptions)
 {
 	if (LevelSoftPtr.IsNull())
 	{
@@ -35,10 +137,10 @@ void ULevelProgressTrackerSubsytem::LoadLevelInstanceLPT(TSoftObjectPtr<UWorld> 
 	LevelInstanceState.bLoadAsTempPackage = bLoadAsTempPackage;
 
 	// Preloads the target level's resources, waits for all resources to load, and starts the level itself.
-	AsyncLoadAssetsLPT(LevelSoftPtr, PreloadingResources, true, LevelInstanceState);
+	AsyncLoadAssetsLPT(LevelSoftPtr, PreloadingResources, true, LevelInstanceState, LoadOptions);
 }
 
-void ULevelProgressTrackerSubsytem::AsyncLoadAssetsLPT(const TSoftObjectPtr<UWorld> LevelSoftPtr, bool PreloadingResources, bool bIsStreamingLevel, FLevelInstanceState LevelInstanceState)
+void ULevelProgressTrackerSubsytem::AsyncLoadAssetsLPT(const TSoftObjectPtr<UWorld> LevelSoftPtr, bool PreloadingResources, bool bIsStreamingLevel, FLevelInstanceState LevelInstanceState, const FLPTLoadOptions& LoadOptions)
 {
 	if (LevelSoftPtr.IsNull())
 	{
@@ -64,6 +166,7 @@ void ULevelProgressTrackerSubsytem::AsyncLoadAssetsLPT(const TSoftObjectPtr<UWor
 	LevelState->TotalAssets = 0;
 	LevelState->LoadedAssets = 0;
 	LevelState->LevelInstanceState = LevelInstanceState;
+	LevelState->LoadOptions = LoadOptions;
 
 	if (bIsStreamingLevel)
 	{
@@ -74,7 +177,7 @@ void ULevelProgressTrackerSubsytem::AsyncLoadAssetsLPT(const TSoftObjectPtr<UWor
 
 	if (PreloadingResources)
 	{
-		StartPreloadingResources(PackagePath, LevelSoftPtr, LevelState, bIsStreamingLevel);
+		StartPreloadingResources(PackagePath, LevelSoftPtr, LevelState, bIsStreamingLevel, LevelState->LoadOptions);
 	}
 	else
 	{
@@ -82,9 +185,9 @@ void ULevelProgressTrackerSubsytem::AsyncLoadAssetsLPT(const TSoftObjectPtr<UWor
 	}
 }
 
-void ULevelProgressTrackerSubsytem::StartPreloadingResources(FName PackagePath, const TSoftObjectPtr<UWorld>& LevelSoftPtr, TSharedRef<FLevelState>& LevelState, bool bIsStreamingLevel)
+void ULevelProgressTrackerSubsytem::StartPreloadingResources(FName PackagePath, const TSoftObjectPtr<UWorld>& LevelSoftPtr, TSharedRef<FLevelState>& LevelState, bool bIsStreamingLevel, const FLPTLoadOptions& LoadOptions)
 {
-	ULevelPreloadDatabase* PreloadDatabase = PreloadDatabaseAsset.LoadSynchronous();
+	ULevelPreloadDatabaseLPT* PreloadDatabase = PreloadDatabaseAsset.LoadSynchronous();
 	if (!PreloadDatabase)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("LPT (StartPreloadingResources): Preload database '%s' is missing. Falling back to level-only loading for '%s'."),
@@ -99,7 +202,7 @@ void ULevelProgressTrackerSubsytem::StartPreloadingResources(FName PackagePath, 
 		return;
 	}
 
-	const FLevelPreloadEntry* LevelEntry = PreloadDatabase->FindEntryByLevel(LevelSoftPtr);
+	const FLevelPreloadEntryLPT* LevelEntry = PreloadDatabase->FindEntryByLevel(LevelSoftPtr);
 	if (!LevelEntry)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("LPT (StartPreloadingResources): No preload entry found for level '%s'. Falling back to level-only loading."),
@@ -113,22 +216,36 @@ void ULevelProgressTrackerSubsytem::StartPreloadingResources(FName PackagePath, 
 		return;
 	}
 
-	LevelState->bUseChunkedPreload = LevelEntry->Rules.bUseChunkedPreload;
-	LevelState->PreloadChunkSize = FMath::Max(1, LevelEntry->Rules.PreloadChunkSize);
+	FLPTFilterSettings RuntimeFilterSettings;
+	if (UAssetFilterSettingsLPT* FilterSettingsAsset = LevelEntry->FilterSettings.LoadSynchronous())
+	{
+		RuntimeFilterSettings = FilterSettingsAsset->ToFilterSettings();
+	}
+	LevelState->bUseChunkedPreload = RuntimeFilterSettings.bUseChunkedPreload;
+	LevelState->PreloadChunkSize = FMath::Max(1, RuntimeFilterSettings.PreloadChunkSize);
+
+	TArray<UAssetCollectionDataLPT*> SelectedCollections;
+	SelectCollectionsForLoad(*LevelEntry, LoadOptions, SelectedCollections);
 
 	TArray<FSoftObjectPath> Paths;
-	TSet<FSoftObjectPath> UniquePaths;
-	Paths.Reserve(LevelEntry->Assets.Num());
+	MergeCollectionAssetLists(SelectedCollections, Paths);
 
-	for (const FSoftObjectPath& AssetPath : LevelEntry->Assets)
+	if (LoadOptions.CollectionKeys.Num() > 0 && SelectedCollections.IsEmpty())
 	{
-		if (!AssetPath.IsValid() || UniquePaths.Contains(AssetPath))
-		{
-			continue;
-		}
-
-		UniquePaths.Add(AssetPath);
-		Paths.Add(AssetPath);
+		UE_LOG(LogTemp, Warning, TEXT("LPT (StartPreloadingResources): Requested CollectionKeys not found for level '%s'. No preload assets selected."),
+			*PackagePath.ToString());
+	}
+	else if (!LoadOptions.GroupTags.IsEmpty() && SelectedCollections.IsEmpty())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("LPT (StartPreloadingResources): Requested GroupTags did not match any collection for level '%s'. No preload assets selected."),
+			*PackagePath.ToString());
+	}
+	else if (LoadOptions.CollectionKeys.IsEmpty() && LoadOptions.GroupTags.IsEmpty() && SelectedCollections.IsEmpty())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("LPT (StartPreloadingResources): Default collection '%s' not found for level '%s'. No preload assets selected."),
+			*DefaultCollectionKey.ToString(),
+			*PackagePath.ToString()
+		);
 	}
 
 	// Setup load stat

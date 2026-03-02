@@ -22,7 +22,7 @@ public:
 	 * In exclusion mode matching assets are removed.
 	 * In inclusion mode only matching assets are kept.
 	 */
-	static TArray<FSoftObjectPath> FilterAssets(const TArray<FSoftObjectPath>& InAssets, const FLPTLevelRules* Rules);
+	static TArray<FSoftObjectPath> FilterAssets(const TArray<FSoftObjectPath>& InAssets, const FLPTFilterSettings* Rules);
 
 	/**
 	 * Filters a World Partition actor by region and cell rules.
@@ -31,14 +31,14 @@ public:
 	static bool ShouldIncludeWorldPartitionActor(
 		const FSoftObjectPath& ActorPath,
 		const TArray<FName>& ActorRegionNames,
-		const FLPTLevelRules* Rules
+		const FLPTFilterSettings* Rules
 	);
 
 	// Returns true when at least one asset or folder rule exists.
-	static bool HasAnyAssetOrFolderRule(const FLPTLevelRules* Rules);
+	static bool HasAnyAssetOrFolderRule(const FLPTFilterSettings* Rules);
 
 	// Returns true when any rule list contains at least one item.
-	static bool HasAnyRule(const FLPTLevelRules* Rules);
+	static bool HasAnyRule(const FLPTFilterSettings* Rules);
 
 	// Resolves validated package/object paths for preload database.
 	static bool ResolveDatabaseAssetPath(

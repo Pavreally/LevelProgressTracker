@@ -2,13 +2,14 @@
 
 #include "EditorModuleLPT.h"
 
-#include "AssetCollectorLPT.h"
-#include "AssetFilterLPT.h"
+#include "EditorModuleGenerationLPT.h"
+
 #include "AssetUtilsLPT.h"
-#include "DataLayerResolverLPT.h"
 #include "DatabaseLPT.h"
 #include "LevelPreloadAssetFilter.h"
-#include "LevelPreloadDatabase.h"
+#include "LevelPreloadDatabaseLPT.h"
+#include "AssetCollectionDataLPT.h"
+#include "AssetFilterSettingsLPT.h"
 #include "LogLPTEditor.h"
 #include "SettingsLPT.h"
 #include "SlateWidgetLPT.h"
@@ -29,18 +30,6 @@
 #include "UObject/Package.h"
 
 DEFINE_LOG_CATEGORY(LogLPTEditor);
-
-namespace EditorModuleLPTPrivate
-{
-	const FName StyleSetName(TEXT("LevelProgressTrackerStyle"));
-	const FName ToolbarIconName(TEXT("LevelProgressTracker.LPTRules"));
-
-	bool IsGlobalDefaultsEnabled(const FLevelPreloadEntry& Entry)
-	{
-		// Rules flag is the source of truth; legacy mirror is synchronized separately.
-		return Entry.Rules.bRulesInitializedFromGlobalDefaults;
-	}
-}
 
 void FLevelProgressTrackerEditorModule::StartupModule()
 {
@@ -137,7 +126,7 @@ void FLevelProgressTrackerEditorModule::RegisterMenus()
 		TEXT("LPT_OpenLevelRules"),
 		FUIAction(FExecuteAction::CreateRaw(this, &FLevelProgressTrackerEditorModule::HandleToolbarOpenLevelRulesClicked)),
 		FText::FromString(TEXT("LPT Rules")),
-		FText::FromString(TEXT("Open per-level rules for the currently opened level. Rules are stored per level in LevelPreloadDatabase.")),
+		FText::FromString(TEXT("Open per-level filter settings DataAsset for the currently opened level. Collection presets are configured in that asset.")),
 		FSlateIcon(
 			EditorModuleLPTPrivate::StyleSetName,
 			EditorModuleLPTPrivate::ToolbarIconName,
@@ -178,8 +167,6 @@ void FLevelProgressTrackerEditorModule::OnPackageSaved(const FString& PackageFil
 	UWorld* SavedWorld = UWorld::FindWorldInPackage(SavedPackage);
 	if (!SavedWorld)
 	{
-		// World Partition usually saves external actor/object packages, not the map package itself.
-		// In that case, rebuild for the currently edited partitioned world if the package belongs to it.
 		if (!GEditor)
 		{
 			return;
@@ -275,144 +262,128 @@ void FLevelProgressTrackerEditorModule::RebuildLevelDependencies(UWorld* SavedWo
 	const FSoftObjectPath LevelObjectPath(FString::Printf(TEXT("%s.%s"), *LevelPackagePath, *LevelAssetName));
 	const TSoftObjectPtr<UWorld> LevelSoftPtr(LevelObjectPath);
 
-	ULevelPreloadDatabase* DatabaseAsset = GetOrCreateDatabaseAsset(Settings);
+	ULevelPreloadDatabaseLPT* DatabaseAsset = GetOrCreateDatabaseAsset(Settings);
 	if (!DatabaseAsset)
 	{
-		UE_LOG(LogLPTEditor, Warning, TEXT("Failed to create or load LevelPreloadDatabase asset."));
+		UE_LOG(LogLPTEditor, Warning, TEXT("Failed to create or load LevelPreloadDatabaseLPT asset."));
 		return;
 	}
 
 	bool bWasEntryAdded = false;
-	FLevelPreloadEntry* LevelEntry = DatabaseAsset->FindOrAddEntryByLevel(LevelSoftPtr, bWasEntryAdded);
+	FLevelPreloadEntryLPT* LevelEntry = DatabaseAsset->FindOrAddEntryByLevel(LevelSoftPtr, bWasEntryAdded);
 	if (!LevelEntry)
 	{
 		UE_LOG(LogLPTEditor, Warning, TEXT("Failed to create or resolve database entry for '%s'."), *LevelPackagePath);
 		return;
 	}
 
-	if (bWasEntryAdded)
+	DatabaseAsset->Modify();
+
+	UAssetFilterSettingsLPT* FilterSettingsAsset = LevelEntry->FilterSettings.LoadSynchronous();
+	if (!FilterSettingsAsset)
 	{
-		LevelEntry->Rules = FLPTLevelRules();
-		LevelEntry->Rules.bRulesInitializedFromGlobalDefaults = false;
-		LevelEntry->bRulesInitializedFromGlobalDefaults = false;
+		FilterSettingsAsset = EditorModuleLPTPrivate::GetOrCreateFilterSettingsAsset(Settings, LevelAssetName);
+		if (!FilterSettingsAsset)
+		{
+			UE_LOG(LogLPTEditor, Warning, TEXT("Failed to create filter settings DataAsset for level '%s'."), *LevelPackagePath);
+			return;
+		}
+
+		LevelEntry->FilterSettings = FilterSettingsAsset;
 	}
 
-	const bool bUseGlobalDefaults = EditorModuleLPTPrivate::IsGlobalDefaultsEnabled(*LevelEntry);
-	// Keep legacy and current flags synchronized in both directions of the toggle.
-	LevelEntry->Rules.bRulesInitializedFromGlobalDefaults = bUseGlobalDefaults;
-	LevelEntry->bRulesInitializedFromGlobalDefaults = bUseGlobalDefaults;
+	EditorModuleLPTPrivate::MaterializeCollectionPresets(Settings, LevelAssetName, FilterSettingsAsset, *LevelEntry);
 
-	const FLPTLevelRules EffectiveRules = bUseGlobalDefaults
-		? AssetFilterLPT::BuildMergedRulesWithGlobalDominance(LevelEntry->Rules, Settings)
-		: LevelEntry->Rules;
+	if (LevelEntry->Collections.IsEmpty())
+	{
+		if (UAssetCollectionDataLPT* DefaultCollectionAsset = EditorModuleLPTPrivate::GetOrCreateCollectionAsset(Settings, LevelAssetName, EditorModuleLPTPrivate::DefaultCollectionKey))
+		{
+			LevelEntry->Collections.Add(DefaultCollectionAsset);
+		}
+		else
+		{
+			UE_LOG(LogLPTEditor, Warning, TEXT("Failed to create default collection asset for level '%s'."), *LevelPackagePath);
+		}
+	}
+
+	ULevelPreloadDatabaseLPT::DeduplicateCollections(*LevelEntry);
 
 	const bool bIsWorldPartition = SavedWorld->IsPartitionedWorld();
-	if (bIsWorldPartition && !EffectiveRules.bAllowWorldPartitionAutoScan)
+	const FLPTFilterSettings BaseRules = FilterSettingsAsset ? FilterSettingsAsset->ToFilterSettings() : FLPTFilterSettings();
+
+	LevelEntry->LevelStateHash = EditorModuleLPTPrivate::ComputeLevelStateHash(SavedWorld, BaseRules);
+	LevelEntry->GenerationTimestamp = FDateTime::UtcNow();
+
+	if (bIsWorldPartition && !BaseRules.bAllowWorldPartitionAutoScan)
 	{
-		UE_LOG(LogLPTEditor, Warning, TEXT("World Partition auto scan is disabled for this level. Skipping database generation for '%s'."),
+		UE_LOG(LogLPTEditor, Warning, TEXT("World Partition auto scan is disabled in filter settings. Skipping collection auto-generation for '%s'."),
 			*SavedWorld->GetOutermost()->GetName()
 		);
 
-		if (bWasEntryAdded)
-		{
-			DatabaseAsset->Modify();
-			DatabaseAsset->MarkPackageDirty();
-			DatabaseAsset->GetOutermost()->MarkPackageDirty();
-			SaveDatabaseAsset(DatabaseAsset);
-		}
+		DatabaseAsset->MarkPackageDirty();
+		DatabaseAsset->GetOutermost()->MarkPackageDirty();
+		SaveDatabaseAsset(DatabaseAsset);
 		return;
 	}
 
 	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
 	IAssetRegistry& Registry = AssetRegistryModule.Get();
 
-	TSet<FSoftObjectPath> UniqueCandidateAssets;
-	TArray<FSoftObjectPath> CandidateAssets;
-
-	if (!bIsWorldPartition)
+	for (const TSoftObjectPtr<UAssetCollectionDataLPT>& CollectionRef : LevelEntry->Collections)
 	{
-		const FName LevelPackageName = FName(*SavedWorld->GetOutermost()->GetName());
-		const TArray<FName> RootPackages = { LevelPackageName };
-		AssetCollectorLPT::AppendHardDependencyClosureAssets(Registry, RootPackages, UniqueCandidateAssets, CandidateAssets, &EffectiveRules);
-	}
-	else
-	{
-		FLPTLevelRules WorldPartitionScanRules = EffectiveRules;
-		DataLayerResolverLPT::ResolveWorldPartitionRegionRulesAsDataLayers(SavedWorld, WorldPartitionScanRules);
-
-		TSet<FName> CandidateActorPackages;
-		AssetCollectorLPT::CollectWorldPartitionActorPackages(SavedWorld, WorldPartitionScanRules, CandidateActorPackages);
-
-		// World Partition scan uses ActorDesc metadata and AssetRegistry package dependencies only.
-		// It is independent from currently loaded editor actors.
-		const TArray<FName> RootPackages = CandidateActorPackages.Array();
-		AssetCollectorLPT::AppendHardDependencyClosureAssets(Registry, RootPackages, UniqueCandidateAssets, CandidateAssets, &EffectiveRules);
-
-		UE_LOG(LogLPTEditor, Log, TEXT("WP Candidates: %d"), CandidateAssets.Num());
-
-		// Keep explicit asset rules discoverable in inclusion mode even when they were not reached by package traversal.
-		AssetCollectorLPT::AppendExplicitAssetRuleCandidates(EffectiveRules, UniqueCandidateAssets, CandidateAssets);
-	}
-
-	FLPTLevelRules FinalFilterRules = EffectiveRules;
-	if (bIsWorldPartition)
-	{
-		// For World Partition, Data Layer and Cell rules are evaluated during actor/package collection.
-		// Final asset filtering should only apply asset/folder include/exclude rules.
-		FinalFilterRules.WorldPartitionDataLayerAssets.Empty();
-		FinalFilterRules.WorldPartitionRegions.Empty();
-		FinalFilterRules.WorldPartitionCells.Empty();
-	}
-
-	TArray<FSoftObjectPath> FilteredAssets;
-	if (bIsWorldPartition && !FinalFilterRules.bUseExclusionMode)
-	{
-		// In WP inclusion mode, folder rules can contribute additional candidates that are outside
-		// actor dependency traversal (for explicit include workflows).
-		AssetCollectorLPT::AppendFolderRuleCandidates(Registry, FinalFilterRules, UniqueCandidateAssets, CandidateAssets);
-	}
-
-	FLPTLevelRules PostExpansionFilterRules = FinalFilterRules;
-	const bool bHasAssetOrFolderRules = FinalFilterRules.AssetRules.Num() > 0 || FinalFilterRules.FolderRules.Num() > 0;
-	if (!FinalFilterRules.bUseExclusionMode && bHasAssetOrFolderRules)
-	{
-		// In inclusion mode, asset/folder rules define seed assets, then we expand hard dependencies
-		// from those seeds while respecting class filters.
-		const TArray<FSoftObjectPath> RuleSeedAssets = ULevelPreloadAssetFilter::FilterAssets(CandidateAssets, &FinalFilterRules);
-
-		TSet<FName> RuleSeedPackages;
-		RuleSeedPackages.Reserve(RuleSeedAssets.Num());
-		for (const FSoftObjectPath& RuleSeedAsset : RuleSeedAssets)
+		UAssetCollectionDataLPT* CollectionAsset = CollectionRef.LoadSynchronous();
+		if (!CollectionAsset)
 		{
-			const FString RuleSeedPackageName = RuleSeedAsset.GetLongPackageName();
-			if (!RuleSeedPackageName.IsEmpty())
+			continue;
+		}
+
+		bool bCollectionModified = false;
+		CollectionAsset->Modify();
+
+		if (EditorModuleLPTPrivate::ResolveCollectionTargetDataLayerAssetsFromNames(SavedWorld, CollectionAsset))
+		{
+			bCollectionModified = true;
+		}
+
+		if (EditorModuleLPTPrivate::DeduplicateCollectionAssetData(CollectionAsset))
+		{
+			bCollectionModified = true;
+		}
+
+		const FLPTFilterSettings CollectionRules = EditorModuleLPTPrivate::BuildCollectionEffectiveRules(BaseRules, CollectionAsset, bIsWorldPartition);
+
+		if (CollectionAsset->bAutoGenerate)
+		{
+			const TArray<FSoftObjectPath> GeneratedAssetList = EditorModuleLPTPrivate::BuildFilteredAssetsForRules(
+				SavedWorld,
+				Registry,
+				CollectionRules
+			);
+
+			if (CollectionAsset->AssetList != GeneratedAssetList)
 			{
-				RuleSeedPackages.Add(FName(*RuleSeedPackageName));
+				CollectionAsset->AssetList = GeneratedAssetList;
+				bCollectionModified = true;
 			}
 		}
 
-		UniqueCandidateAssets.Reset();
-		CandidateAssets.Reset();
-
-		if (RuleSeedPackages.Num() > 0)
+		const uint32 NewCollectionHash = EditorModuleLPTPrivate::ComputeCollectionContentHash(CollectionAsset, CollectionRules);
+		if (CollectionAsset->CollectionContentHash != NewCollectionHash)
 		{
-			const TArray<FName> RuleSeedPackageArray = RuleSeedPackages.Array();
-			AssetCollectorLPT::AppendHardDependencyClosureAssets(Registry, RuleSeedPackageArray, UniqueCandidateAssets, CandidateAssets, &FinalFilterRules);
+			CollectionAsset->CollectionContentHash = NewCollectionHash;
+			bCollectionModified = true;
 		}
 
-		// Seed rules are already applied. Final pass should keep expanded candidates.
-		PostExpansionFilterRules.AssetRules.Empty();
-		PostExpansionFilterRules.FolderRules.Empty();
-	}
+		if (bCollectionModified)
+		{
+			CollectionAsset->MarkPackageDirty();
+			CollectionAsset->GetOutermost()->MarkPackageDirty();
 
-	// Always run final filtering pass so folder/asset include-exclude rules behave consistently.
-	FilteredAssets = ULevelPreloadAssetFilter::FilterAssets(CandidateAssets, &PostExpansionFilterRules);
-
-	DatabaseAsset->Modify();
-	if (!DatabaseAsset->UpdateEntryAssetsByLevel(LevelSoftPtr, FilteredAssets))
-	{
-		UE_LOG(LogLPTEditor, Warning, TEXT("Failed to update preload assets for level '%s'."), *LevelPackagePath);
-		return;
+			if (!EditorModuleLPTPrivate::SaveAssetObject(CollectionAsset))
+			{
+				UE_LOG(LogLPTEditor, Warning, TEXT("Failed to save collection asset '%s'."), *CollectionAsset->GetPathName());
+			}
+		}
 	}
 
 	DatabaseAsset->MarkPackageDirty();
@@ -420,25 +391,20 @@ void FLevelProgressTrackerEditorModule::RebuildLevelDependencies(UWorld* SavedWo
 
 	if (!SaveDatabaseAsset(DatabaseAsset))
 	{
-		UE_LOG(LogLPTEditor, Warning, TEXT("Failed to save LevelPreloadDatabase after updating '%s'."),
+		UE_LOG(LogLPTEditor, Warning, TEXT("Failed to save LevelPreloadDatabaseLPT after updating '%s'."),
 			*LevelPackagePath
 		);
 	}
 }
 
-bool FLevelProgressTrackerEditorModule::PromptCreateLevelRules(bool& bApplyGlobalDefaults) const
-{
-	return SlateWidgetLPT::PromptCreateLevelRules(bApplyGlobalDefaults);
-}
-
-void FLevelProgressTrackerEditorModule::OpenLevelRulesWindow(ULevelPreloadDatabase* DatabaseAsset, const TSoftObjectPtr<UWorld>& LevelSoftPtr, const FString& LevelDisplayName, bool bIsWorldPartition)
+void FLevelProgressTrackerEditorModule::OpenLevelRulesWindow(ULevelPreloadDatabaseLPT* DatabaseAsset, const TSoftObjectPtr<UWorld>& LevelSoftPtr, const FString& LevelDisplayName, bool bIsWorldPartition)
 {
 	SlateWidgetLPT::OpenLevelRulesWindow(
 		DatabaseAsset,
 		LevelSoftPtr,
 		LevelDisplayName,
 		bIsWorldPartition,
-		[this](ULevelPreloadDatabase* InDatabaseAsset)
+		[this](ULevelPreloadDatabaseLPT* InDatabaseAsset)
 		{
 			return SaveDatabaseAsset(InDatabaseAsset);
 		}
@@ -470,31 +436,99 @@ void FLevelProgressTrackerEditorModule::HandleOpenLevelRulesEditorRequested(ULev
 		return;
 	}
 
-	ULevelPreloadDatabase* DatabaseAsset = GetOrCreateDatabaseAsset(EffectiveSettings);
-	if (!DatabaseAsset)
+	ULevelPreloadDatabaseLPT* DatabaseAsset = nullptr;
+	if (EffectiveSettings->bAutoGenerateOnLevelSave)
 	{
-		ShowWarningDialog(TEXT("Failed to create or load LevelPreloadDatabase asset."));
-		return;
+		DatabaseAsset = GetOrCreateDatabaseAsset(EffectiveSettings);
 	}
-
-	FLevelPreloadEntry* Entry = DatabaseAsset->FindEntryByLevel(LevelSoftPtr);
-	if (!Entry)
+	else
 	{
-		bool bWasAdded = false;
-		Entry = DatabaseAsset->FindOrAddEntryByLevel(LevelSoftPtr, bWasAdded);
-		if (!Entry)
+		FString IgnoredDatabasePackagePath;
+		FSoftObjectPath DatabaseObjectPath;
+		if (!ULevelPreloadAssetFilter::ResolveDatabaseAssetPath(EffectiveSettings, IgnoredDatabasePackagePath, DatabaseObjectPath))
 		{
-			ShowWarningDialog(FString::Printf(TEXT("Failed to create level rules entry for '%s'."), *LevelPackagePath));
+			ShowWarningDialog(TEXT("Invalid LPT database path in project settings. With Auto Generate on Level Save disabled, database must already exist."));
 			return;
 		}
 
-		// Auto-create an empty per-level rules entry and open the full rules editor immediately.
-		// Global defaults can be enabled by the user via "Rules Initialized from Global Defaults".
-		Entry->Rules = FLPTLevelRules();
-		Entry->Rules.bRulesInitializedFromGlobalDefaults = false;
-		Entry->bRulesInitializedFromGlobalDefaults = false;
+		DatabaseAsset = LoadObject<ULevelPreloadDatabaseLPT>(nullptr, *DatabaseObjectPath.ToString());
+	}
 
-		DatabaseAsset->Modify();
+	if (!DatabaseAsset)
+	{
+		ShowWarningDialog(TEXT("LevelPreloadDatabaseLPT asset was not found. Enable Auto Generate on Level Save or create database first."));
+		return;
+	}
+
+	FLevelPreloadEntryLPT* Entry = nullptr;
+	UAssetFilterSettingsLPT* FilterSettingsAsset = nullptr;
+
+	if (!EffectiveSettings->bAutoGenerateOnLevelSave)
+	{
+		Entry = DatabaseAsset->FindEntryByLevel(LevelSoftPtr);
+		if (!Entry)
+		{
+			ShowWarningDialog(FString::Printf(
+				TEXT("No LPT entry exists for level '%s'. Auto Generate on Level Save is disabled, so no files were created."),
+				*LevelPackagePath));
+			return;
+		}
+
+		FilterSettingsAsset = Entry->FilterSettings.LoadSynchronous();
+		if (!FilterSettingsAsset)
+		{
+			ShowWarningDialog(FString::Printf(
+				TEXT("Filter settings asset is missing for level '%s'. Auto Generate on Level Save is disabled, so no files were created."),
+				*LevelPackagePath));
+			return;
+		}
+
+		OpenLevelRulesWindow(DatabaseAsset, LevelSoftPtr, LevelDisplayName, bIsWorldPartition);
+		return;
+	}
+
+	bool bWasAdded = false;
+	Entry = DatabaseAsset->FindOrAddEntryByLevel(LevelSoftPtr, bWasAdded);
+	if (!Entry)
+	{
+		ShowWarningDialog(FString::Printf(TEXT("Failed to create level rules entry for '%s'."), *LevelPackagePath));
+		return;
+	}
+
+	bool bDatabaseModified = false;
+	DatabaseAsset->Modify();
+
+	FilterSettingsAsset = Entry->FilterSettings.LoadSynchronous();
+	if (!FilterSettingsAsset)
+	{
+		FilterSettingsAsset = EditorModuleLPTPrivate::GetOrCreateFilterSettingsAsset(EffectiveSettings, LevelDisplayName);
+		if (!FilterSettingsAsset)
+		{
+			ShowWarningDialog(FString::Printf(TEXT("Failed to create filter settings asset for '%s'."), *LevelPackagePath));
+			return;
+		}
+
+		Entry->FilterSettings = FilterSettingsAsset;
+		bDatabaseModified = true;
+	}
+
+	bDatabaseModified |= EditorModuleLPTPrivate::MaterializeCollectionPresets(EffectiveSettings, LevelDisplayName, FilterSettingsAsset, *Entry);
+
+	if (Entry->Collections.IsEmpty())
+	{
+		if (UAssetCollectionDataLPT* DefaultCollectionAsset = EditorModuleLPTPrivate::GetOrCreateCollectionAsset(EffectiveSettings, LevelDisplayName, EditorModuleLPTPrivate::DefaultCollectionKey))
+		{
+			Entry->Collections.Add(DefaultCollectionAsset);
+			bDatabaseModified = true;
+		}
+	}
+
+	const int32 CollectionsBeforeDedupe = Entry->Collections.Num();
+	ULevelPreloadDatabaseLPT::DeduplicateCollections(*Entry);
+	bDatabaseModified |= (Entry->Collections.Num() != CollectionsBeforeDedupe);
+
+	if (bDatabaseModified)
+	{
 		DatabaseAsset->MarkPackageDirty();
 		DatabaseAsset->GetOutermost()->MarkPackageDirty();
 		SaveDatabaseAsset(DatabaseAsset);
@@ -503,18 +537,16 @@ void FLevelProgressTrackerEditorModule::HandleOpenLevelRulesEditorRequested(ULev
 	OpenLevelRulesWindow(DatabaseAsset, LevelSoftPtr, LevelDisplayName, bIsWorldPartition);
 }
 
-ULevelPreloadDatabase* FLevelProgressTrackerEditorModule::GetOrCreateDatabaseAsset(const ULevelProgressTrackerSettings* Settings) const
+ULevelPreloadDatabaseLPT* FLevelProgressTrackerEditorModule::GetOrCreateDatabaseAsset(const ULevelProgressTrackerSettings* Settings) const
 {
 	return DatabaseLPT::GetOrCreateDatabaseAsset(Settings);
 }
 
-bool FLevelProgressTrackerEditorModule::SaveDatabaseAsset(ULevelPreloadDatabase* DatabaseAsset) const
+bool FLevelProgressTrackerEditorModule::SaveDatabaseAsset(ULevelPreloadDatabaseLPT* DatabaseAsset) const
 {
 	return DatabaseLPT::SaveDatabaseAsset(DatabaseAsset);
 }
 #endif
 
 IMPLEMENT_MODULE(FLevelProgressTrackerEditorModule, LevelProgressTrackerEditor)
-
-
 

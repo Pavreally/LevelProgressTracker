@@ -67,7 +67,7 @@ namespace LevelPreloadAssetFilterPrivate
 	}
 }
 
-TArray<FSoftObjectPath> ULevelPreloadAssetFilter::FilterAssets(const TArray<FSoftObjectPath>& InAssets, const FLPTLevelRules* Rules)
+TArray<FSoftObjectPath> ULevelPreloadAssetFilter::FilterAssets(const TArray<FSoftObjectPath>& InAssets, const FLPTFilterSettings* Rules)
 {
 	TArray<FSoftObjectPath> Result;
 	TSet<FSoftObjectPath> UniqueResult;
@@ -192,7 +192,7 @@ TArray<FSoftObjectPath> ULevelPreloadAssetFilter::FilterAssets(const TArray<FSof
 bool ULevelPreloadAssetFilter::ShouldIncludeWorldPartitionActor(
 	const FSoftObjectPath& ActorPath,
 	const TArray<FName>& ActorRegionNames,
-	const FLPTLevelRules* Rules
+	const FLPTFilterSettings* Rules
 )
 {
 	if (!ActorPath.IsValid())
@@ -258,12 +258,12 @@ bool ULevelPreloadAssetFilter::ShouldIncludeWorldPartitionActor(
 	return bIsIncluded;
 }
 
-bool ULevelPreloadAssetFilter::HasAnyAssetOrFolderRule(const FLPTLevelRules* Rules)
+bool ULevelPreloadAssetFilter::HasAnyAssetOrFolderRule(const FLPTFilterSettings* Rules)
 {
 	return Rules ? (Rules->AssetRules.Num() > 0 || Rules->FolderRules.Num() > 0) : false;
 }
 
-bool ULevelPreloadAssetFilter::HasAnyRule(const FLPTLevelRules* Rules)
+bool ULevelPreloadAssetFilter::HasAnyRule(const FLPTFilterSettings* Rules)
 {
 	return Rules ? (
 		Rules->AssetRules.Num() > 0 ||

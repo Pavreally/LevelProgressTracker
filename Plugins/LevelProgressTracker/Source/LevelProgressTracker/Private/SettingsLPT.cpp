@@ -9,7 +9,54 @@
 namespace LevelProgressTrackerSettingsPrivate
 {
 	static const FString DefaultDatabaseFolder = TEXT("/Game/_DataLPT");
-	static const FString DatabaseAssetName = TEXT("LevelPreloadDatabase");
+	static const FString DefaultCollectionSubfolder = TEXT("AssetList");
+	static const FString DefaultFilterSettingsSubfolder = TEXT("AssetFilterSettings");
+	static const FString DatabaseAssetName = TEXT("LevelPreloadDatabaseLPT");
+
+	static FString NormalizeContentFolderPath(FString FolderPath, const FString& DefaultFolderPath)
+	{
+		FolderPath.TrimStartAndEndInline();
+		FolderPath.ReplaceInline(TEXT("\\"), TEXT("/"));
+
+		if (FolderPath.IsEmpty())
+		{
+			FolderPath = DefaultFolderPath;
+		}
+
+		while (FolderPath.EndsWith(TEXT("/")))
+		{
+			FolderPath.LeftChopInline(1, EAllowShrinking::No);
+		}
+
+		if (FolderPath.IsEmpty())
+		{
+			FolderPath = DefaultFolderPath;
+		}
+
+		// Keep historical behavior: plain "/Game" meant "use the default subfolder".
+		if (FolderPath.Equals(TEXT("/Game"), ESearchCase::IgnoreCase) || FolderPath.Equals(TEXT("Game"), ESearchCase::IgnoreCase))
+		{
+			FolderPath = DefaultFolderPath;
+		}
+
+		if (!FolderPath.StartsWith(TEXT("/")))
+		{
+			if (FolderPath.Equals(TEXT("Game"), ESearchCase::IgnoreCase))
+			{
+				FolderPath = TEXT("/Game");
+			}
+			else if (FolderPath.StartsWith(TEXT("Game/"), ESearchCase::IgnoreCase))
+			{
+				FolderPath = FString::Printf(TEXT("/%s"), *FolderPath);
+			}
+			else
+			{
+				FolderPath = FString::Printf(TEXT("/Game/%s"), *FolderPath);
+			}
+		}
+
+		return FolderPath;
+	}
 }
 
 #if WITH_EDITOR
@@ -19,6 +66,14 @@ ULevelProgressTrackerSettings::FOnOpenLevelRulesEditorRequested ULevelProgressTr
 ULevelProgressTrackerSettings::ULevelProgressTrackerSettings()
 {
 	DatabaseFolder.Path = LevelProgressTrackerSettingsPrivate::DefaultDatabaseFolder;
+	AssetCollectionFolder.Path = FString::Printf(
+		TEXT("%s/%s"),
+		*LevelProgressTrackerSettingsPrivate::DefaultDatabaseFolder,
+		*LevelProgressTrackerSettingsPrivate::DefaultCollectionSubfolder);
+	AssetFilterSettingsFolder.Path = FString::Printf(
+		TEXT("%s/%s"),
+		*LevelProgressTrackerSettingsPrivate::DefaultDatabaseFolder,
+		*LevelProgressTrackerSettingsPrivate::DefaultFilterSettingsSubfolder);
 	bAutoGenerateOnLevelSave = true;
 }
 
@@ -29,49 +84,9 @@ FName ULevelProgressTrackerSettings::GetCategoryName() const
 
 bool ULevelProgressTrackerSettings::ResolveDatabaseAssetPaths(FString& OutDatabaseFolderLongPath, FString& OutDatabasePackagePath, FSoftObjectPath& OutDatabaseObjectPath) const
 {
-	FString FolderPath = DatabaseFolder.Path;
-	FolderPath.TrimStartAndEndInline();
-	FolderPath.ReplaceInline(TEXT("\\"), TEXT("/"));
-
-	if (FolderPath.IsEmpty())
-	{
-		FolderPath = LevelProgressTrackerSettingsPrivate::DefaultDatabaseFolder;
-	}
-
-	while (FolderPath.EndsWith(TEXT("/")))
-	{
-		FolderPath.LeftChopInline(1, EAllowShrinking::No);
-	}
-
-	if (FolderPath.IsEmpty())
-	{
-		FolderPath = LevelProgressTrackerSettingsPrivate::DefaultDatabaseFolder;
-	}
-
-	// Keep historical behavior: plain "/Game" meant "use the default subfolder".
-	if (FolderPath.Equals(TEXT("/Game"), ESearchCase::IgnoreCase) || FolderPath.Equals(TEXT("Game"), ESearchCase::IgnoreCase))
-	{
-		FolderPath = LevelProgressTrackerSettingsPrivate::DefaultDatabaseFolder;
-	}
-
-	// Backward compatibility: old settings could be saved as relative paths.
-	if (!FolderPath.StartsWith(TEXT("/")))
-	{
-		if (FolderPath.Equals(TEXT("Game"), ESearchCase::IgnoreCase))
-		{
-			FolderPath = TEXT("/Game");
-		}
-		else if (FolderPath.StartsWith(TEXT("Game/"), ESearchCase::IgnoreCase))
-		{
-			FolderPath = FString::Printf(TEXT("/%s"), *FolderPath);
-		}
-		else
-		{
-			FolderPath = FString::Printf(TEXT("/Game/%s"), *FolderPath);
-		}
-	}
-
-	OutDatabaseFolderLongPath = FolderPath;
+	OutDatabaseFolderLongPath = LevelProgressTrackerSettingsPrivate::NormalizeContentFolderPath(
+		DatabaseFolder.Path,
+		LevelProgressTrackerSettingsPrivate::DefaultDatabaseFolder);
 
 	if (!FPackageName::IsValidLongPackageName(OutDatabaseFolderLongPath))
 	{
@@ -92,18 +107,56 @@ bool ULevelProgressTrackerSettings::ResolveDatabaseAssetPaths(FString& OutDataba
 	return OutDatabaseObjectPath.IsValid();
 }
 
-void ULevelProgressTrackerSettings::BuildGlobalDefaultRules(FLPTLevelRules& OutRules) const
+bool ULevelProgressTrackerSettings::ResolveAssetCollectionFolderPath(FString& OutCollectionFolderLongPath) const
 {
-	OutRules.bUseExclusionMode = bUseExclusionMode;
-	OutRules.AssetRules = AssetRules;
-	OutRules.FolderRules = FolderRules;
+	FString ResolvedDatabaseFolder;
+	FString IgnoredDatabasePackage;
+	FSoftObjectPath IgnoredDatabaseObjectPath;
+	if (!ResolveDatabaseAssetPaths(ResolvedDatabaseFolder, IgnoredDatabasePackage, IgnoredDatabaseObjectPath))
+	{
+		return false;
+	}
+
+	const FString DefaultCollectionFolder = FString::Printf(
+		TEXT("%s/%s"),
+		*ResolvedDatabaseFolder,
+		*LevelProgressTrackerSettingsPrivate::DefaultCollectionSubfolder);
+
+	OutCollectionFolderLongPath = LevelProgressTrackerSettingsPrivate::NormalizeContentFolderPath(
+		AssetCollectionFolder.Path,
+		DefaultCollectionFolder);
+
+	return FPackageName::IsValidLongPackageName(OutCollectionFolderLongPath);
+}
+
+bool ULevelProgressTrackerSettings::ResolveFilterSettingsFolderPath(FString& OutFilterSettingsFolderLongPath) const
+{
+	FString ResolvedDatabaseFolder;
+	FString IgnoredDatabasePackage;
+	FSoftObjectPath IgnoredDatabaseObjectPath;
+	if (!ResolveDatabaseAssetPaths(ResolvedDatabaseFolder, IgnoredDatabasePackage, IgnoredDatabaseObjectPath))
+	{
+		return false;
+	}
+
+	const FString DefaultFilterSettingsFolder = FString::Printf(
+		TEXT("%s/%s"),
+		*ResolvedDatabaseFolder,
+		*LevelProgressTrackerSettingsPrivate::DefaultFilterSettingsSubfolder);
+
+	OutFilterSettingsFolderLongPath = LevelProgressTrackerSettingsPrivate::NormalizeContentFolderPath(
+		AssetFilterSettingsFolder.Path,
+		DefaultFilterSettingsFolder);
+
+	return FPackageName::IsValidLongPackageName(OutFilterSettingsFolderLongPath);
+}
+
+void ULevelProgressTrackerSettings::BuildGlobalDefaultRules(FLPTFilterSettings& OutRules) const
+{
+	OutRules = FLPTFilterSettings();
 	OutRules.bUseChunkedPreload = bUseChunkedPreload;
 	OutRules.PreloadChunkSize = FMath::Max(1, PreloadChunkSize);
 	OutRules.AssetClassFilter = AssetClassFilter;
-	OutRules.bAllowWorldPartitionAutoScan = bAllowWorldPartitionAutoScan;
-	OutRules.WorldPartitionDataLayerAssets = WorldPartitionDataLayerAssets;
-	OutRules.WorldPartitionRegions = WorldPartitionRegions;
-	OutRules.WorldPartitionCells = WorldPartitionCells;
 }
 
 void ULevelProgressTrackerSettings::OpenLevelRulesEditorForCurrentLevel()

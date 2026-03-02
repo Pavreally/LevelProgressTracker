@@ -12,7 +12,7 @@ namespace AssetCollectorLPT
 {
 	void AppendFolderRuleCandidates(
 		IAssetRegistry& Registry,
-		const FLPTLevelRules& Rules,
+		const FLPTFilterSettings& Rules,
 		TSet<FSoftObjectPath>& UniquePaths,
 		TArray<FSoftObjectPath>& OutAssets
 	);
@@ -22,15 +22,15 @@ namespace AssetCollectorLPT
 		const TArray<FName>& RootPackageNames,
 		TSet<FSoftObjectPath>& UniquePaths,
 		TArray<FSoftObjectPath>& OutAssets,
-		const FLPTLevelRules* Rules = nullptr
+		const FLPTFilterSettings* Rules = nullptr
 	);
 
 	void AppendExplicitAssetRuleCandidates(
-		const FLPTLevelRules& Rules,
+		const FLPTFilterSettings& Rules,
 		TSet<FSoftObjectPath>& UniquePaths,
 		TArray<FSoftObjectPath>& OutAssets
 	);
 
-	void CollectWorldPartitionActorPackages(UWorld* World, const FLPTLevelRules& Rules, TSet<FName>& InOutCandidateActorPackages);
+	void CollectWorldPartitionActorPackages(UWorld* World, const FLPTFilterSettings& Rules, TSet<FName>& InOutCandidateActorPackages);
 }
 

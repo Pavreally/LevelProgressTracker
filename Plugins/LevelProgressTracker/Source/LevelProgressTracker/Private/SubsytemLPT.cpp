@@ -2,7 +2,7 @@
 
 #include "SubsytemLPT.h"
 #include "LevelPreloadAssetFilter.h"
-#include "LevelPreloadDatabase.h"
+#include "LevelPreloadDatabaseLPT.h"
 #include "SettingsLPT.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
@@ -28,7 +28,7 @@ void ULevelProgressTrackerSubsytem::Initialize(FSubsystemCollectionBase& Collect
 
 	if (ULevelPreloadAssetFilter::ResolveDatabaseAssetPath(Settings, DatabasePackagePath, DatabaseObjectPath))
 	{
-		PreloadDatabaseAsset = TSoftObjectPtr<ULevelPreloadDatabase>(DatabaseObjectPath);
+		PreloadDatabaseAsset = TSoftObjectPtr<ULevelPreloadDatabaseLPT>(DatabaseObjectPath);
 	}
 	else
 	{

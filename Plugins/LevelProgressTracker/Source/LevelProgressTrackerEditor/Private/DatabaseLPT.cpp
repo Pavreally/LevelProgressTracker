@@ -3,7 +3,7 @@
 #include "DatabaseLPT.h"
 
 #include "LevelPreloadAssetFilter.h"
-#include "LevelPreloadDatabase.h"
+#include "LevelPreloadDatabaseLPT.h"
 #include "LogLPTEditor.h"
 #include "SettingsLPT.h"
 
@@ -17,7 +17,7 @@
 
 namespace DatabaseLPT
 {
-	ULevelPreloadDatabase* GetOrCreateDatabaseAsset(const ULevelProgressTrackerSettings* Settings)
+	ULevelPreloadDatabaseLPT* GetOrCreateDatabaseAsset(const ULevelProgressTrackerSettings* Settings)
 	{
 		FString DatabasePackagePath;
 		FSoftObjectPath DatabaseObjectPath;
@@ -49,19 +49,19 @@ namespace DatabaseLPT
 			DatabaseAssetName = FPackageName::GetLongPackageAssetName(DatabasePackagePath);
 		}
 
-		ULevelPreloadDatabase* DatabaseAsset = FindObject<ULevelPreloadDatabase>(DatabasePackage, *DatabaseAssetName);
+		ULevelPreloadDatabaseLPT* DatabaseAsset = FindObject<ULevelPreloadDatabaseLPT>(DatabasePackage, *DatabaseAssetName);
 		if (!DatabaseAsset)
 		{
-			DatabaseAsset = LoadObject<ULevelPreloadDatabase>(nullptr, *DatabaseObjectPath.ToString());
+			DatabaseAsset = LoadObject<ULevelPreloadDatabaseLPT>(nullptr, *DatabaseObjectPath.ToString());
 		}
 		if (DatabaseAsset)
 		{
 			return DatabaseAsset;
 		}
 
-		DatabaseAsset = NewObject<ULevelPreloadDatabase>(
+		DatabaseAsset = NewObject<ULevelPreloadDatabaseLPT>(
 			DatabasePackage,
-			ULevelPreloadDatabase::StaticClass(),
+			ULevelPreloadDatabaseLPT::StaticClass(),
 			*DatabaseAssetName,
 			RF_Public | RF_Standalone
 		);
@@ -80,7 +80,7 @@ namespace DatabaseLPT
 		return DatabaseAsset;
 	}
 
-	bool SaveDatabaseAsset(ULevelPreloadDatabase* DatabaseAsset)
+	bool SaveDatabaseAsset(ULevelPreloadDatabaseLPT* DatabaseAsset)
 	{
 		if (!DatabaseAsset)
 		{

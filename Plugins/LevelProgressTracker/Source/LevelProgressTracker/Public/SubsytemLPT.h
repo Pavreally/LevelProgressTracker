@@ -27,13 +27,14 @@
 #include "CoreMinimal.h"
 #include "Subsystems/GameInstanceSubsystem.h"
 #include "Engine/LevelStreamingDynamic.h"
+#include "GameplayTagContainer.h"
 #include "UObject/SoftObjectPath.h"
 
 #include "SubsytemLPT.generated.h"
 
 struct FStreamableHandle;
 class SWidgetWrapLPT;
-class ULevelPreloadDatabase;
+class ULevelPreloadDatabaseLPT;
 
 UENUM()
 enum class ELevelLoadMethod : uint8
@@ -41,6 +42,19 @@ enum class ELevelLoadMethod : uint8
 	Standard UMETA(DisplayName = "Standard"),
 	LevelStreaming UMETA(DisplayName = "LevelStreaming"),
 	WorldPartition UMETA(DisplayName = "WorldPartition")
+};
+
+USTRUCT(BlueprintType)
+struct FLPTLoadOptions
+{
+	GENERATED_BODY()
+
+public:
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "LPT Subsystem")
+	TArray<FName> CollectionKeys;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "LPT Subsystem")
+	FGameplayTagContainer GroupTags;
 };
 
 // Contains data for a streaming embedded game level.
@@ -107,6 +121,9 @@ public:
 
 	UPROPERTY()
 	FLevelInstanceState LevelInstanceState;
+
+	// Runtime collection-selection options used to resolve preload assets from collection data assets.
+	FLPTLoadOptions LoadOptions;
 };
 
 /**
@@ -142,8 +159,11 @@ public:
 	 * A function that opens a new level. Similar to the standard 'OpenLevel' function.
 	 * @param LevelSoftPtr Soft link to target level.
 	 * @param PreloadingResources Before opening a level, its resources are automatically loaded. If false, then the calculation of loaded assets and progress does not work.
+	 * @param LoadOptions Optional collection-selection options. Empty options use collection key "Default".
 	 */
-	UFUNCTION(BlueprintCallable, Category = "LPT Subsystem")
+	UFUNCTION(BlueprintCallable, Category = "LPT Subsystem", meta = (AutoCreateRefTerm = "LoadOptions"))
+	void OpenLevelLPT(const TSoftObjectPtr<UWorld> LevelSoftPtr, bool PreloadingResources, const FLPTLoadOptions& LoadOptions);
+
 	void OpenLevelLPT(const TSoftObjectPtr<UWorld> LevelSoftPtr, bool PreloadingResources = true);
 
 	/**
@@ -154,8 +174,18 @@ public:
 	 * @param OptionalLevelStreamingClass Allows you to specify a custom class instead of the standard one.
 	 * @param bLoadAsTempPackage If this is true, the level is loaded as a temporary package that is not saved to disk.
 	 * @param PreloadingResources Before opening a level, its resources are automatically loaded. If False, then the calculation of loaded assets and progress does not work.
+	 * @param LoadOptions Optional collection-selection options. Empty options use collection key "Default".
 	 */
-	UFUNCTION(BlueprintCallable, Category = "LPT Subsystem")
+	UFUNCTION(BlueprintCallable, Category = "LPT Subsystem", meta = (AutoCreateRefTerm = "LoadOptions"))
+	void LoadLevelInstanceLPT(
+		TSoftObjectPtr<UWorld> LevelSoftPtr,
+		const FTransform Transform,
+		TSubclassOf<ULevelStreamingDynamic> OptionalLevelStreamingClass,
+		bool bLoadAsTempPackage,
+		bool PreloadingResources,
+		const FLPTLoadOptions& LoadOptions
+	);
+
 	void LoadLevelInstanceLPT(
 		TSoftObjectPtr<UWorld> LevelSoftPtr,
 		const FTransform Transform,
@@ -207,7 +237,7 @@ private:
 
 	// Reference to the project asset that stores precomputed level dependencies.
 	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category = "LPT Subsystem", meta = (AllowPrivateAccess = "true", ToolTip = "Database generated in editor with assets that should be preloaded for each level."))
-	TSoftObjectPtr<ULevelPreloadDatabase> PreloadDatabaseAsset;
+	TSoftObjectPtr<ULevelPreloadDatabaseLPT> PreloadDatabaseAsset;
 
 	/**
 	 * Starts async preloading by reading the entry for the level from preload database.
@@ -220,8 +250,9 @@ private:
 	void AsyncLoadAssetsLPT(
 		const TSoftObjectPtr<UWorld> LevelSoftPtr,
 		bool PreloadingResources,
-		bool bIsStreamingLevel = false,
-		FLevelInstanceState LevelInstanceState = FLevelInstanceState());
+		bool bIsStreamingLevel,
+		FLevelInstanceState LevelInstanceState,
+		const FLPTLoadOptions& LoadOptions);
 
 	// Callback when all loads are complete.
 	void OnAllAssetsLoaded(FName PackagePath, bool bIsStreamingLevel, TSharedRef<FLevelState> LevelState);
@@ -251,7 +282,7 @@ private:
 	 * @param LevelState A shared FLevelState structure that stores progress, pointers, and streaming parameters.
 	 * @param bIsStreamingLevel Will the level be loaded via streaming.
 	 */
-	void StartPreloadingResources(FName PackagePath, const TSoftObjectPtr<UWorld>& LevelSoftPtr, TSharedRef<FLevelState>& LevelState, bool bIsStreamingLevel);
+	void StartPreloadingResources(FName PackagePath, const TSoftObjectPtr<UWorld>& LevelSoftPtr, TSharedRef<FLevelState>& LevelState, bool bIsStreamingLevel, const FLPTLoadOptions& LoadOptions);
 
 	// Starts loading the next chunk for chunked preload mode.
 	void StartNextPreloadChunk(FName PackagePath, bool bIsStreamingLevel, TSharedRef<FLevelState> LevelState);

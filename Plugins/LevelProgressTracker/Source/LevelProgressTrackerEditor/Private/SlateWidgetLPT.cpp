@@ -2,15 +2,19 @@
 
 #include "SlateWidgetLPT.h"
 
+#include "AssetFilterSettingsLPT.h"
 #include "Editor.h"
 #include "Framework/Application/SlateApplication.h"
-#include "IStructureDetailsView.h"
-#include "LevelPreloadDatabase.h"
+#include "IDetailsView.h"
+#include "LevelPreloadDatabaseLPT.h"
 #include "Modules/ModuleManager.h"
 #include "PropertyEditorModule.h"
-#include "UObject/StructOnScope.h"
+#include "HAL/FileManager.h"
+#include "Misc/PackageName.h"
+#include "Misc/Paths.h"
+#include "UObject/Package.h"
+#include "UObject/SavePackage.h"
 #include "Widgets/Input/SButton.h"
-#include "Widgets/Input/SCheckBox.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SSeparator.h"
 #include "Widgets/Layout/SUniformGridPanel.h"
@@ -21,108 +25,43 @@ namespace SlateWidgetLPT
 {
 	namespace
 	{
-		bool IsGlobalDefaultsEnabled(const FLevelPreloadEntry& Entry)
+		bool SaveAssetObject(UObject* AssetObject)
 		{
-			// Rules flag is the source of truth; legacy mirror is synchronized separately.
-			return Entry.Rules.bRulesInitializedFromGlobalDefaults;
+			if (!AssetObject)
+			{
+				return false;
+			}
+
+			UPackage* Package = AssetObject->GetOutermost();
+			if (!Package)
+			{
+				return false;
+			}
+
+			const FString PackageName = Package->GetName();
+			FString PackageFilename;
+			if (!FPackageName::TryConvertLongPackageNameToFilename(PackageName, PackageFilename, FPackageName::GetAssetPackageExtension()))
+			{
+				return false;
+			}
+
+			const FString PackageDirectory = FPaths::GetPath(PackageFilename);
+			IFileManager::Get().MakeDirectory(*PackageDirectory, true);
+
+			FSavePackageArgs SaveArgs;
+			SaveArgs.TopLevelFlags = RF_Public | RF_Standalone;
+			SaveArgs.SaveFlags = SAVE_NoError;
+			SaveArgs.Error = GError;
+			return UPackage::SavePackage(Package, AssetObject, *PackageFilename, SaveArgs);
 		}
-	}
-
-	bool PromptCreateLevelRules(bool& bApplyGlobalDefaults)
-	{
-		bApplyGlobalDefaults = false;
-
-		bool bCreateConfirmed = false;
-		TSharedPtr<SWindow> DialogWindow;
-		TSharedPtr<SCheckBox> ApplyDefaultsCheckBox;
-
-		DialogWindow = SNew(SWindow)
-			.Title(FText::FromString(TEXT("Create LPT Rules")))
-			.ClientSize(FVector2D(520.f, 190.f))
-			.SupportsMaximize(false)
-			.SupportsMinimize(false)
-			.IsTopmostWindow(true);
-
-		DialogWindow->SetContent(
-			SNew(SBorder)
-			.Padding(12.f)
-			[
-				SNew(SVerticalBox)
-
-				+ SVerticalBox::Slot()
-				.AutoHeight()
-				.Padding(0.f, 0.f, 0.f, 8.f)
-				[
-					SNew(STextBlock)
-					.Text(FText::FromString(TEXT("No per-level rules exist for the currently opened level.")))
-				]
-
-				+ SVerticalBox::Slot()
-				.AutoHeight()
-				.Padding(0.f, 0.f, 0.f, 12.f)
-				[
-					SAssignNew(ApplyDefaultsCheckBox, SCheckBox)
-					.IsChecked(ECheckBoxState::Unchecked)
-					[
-						SNew(STextBlock)
-						.Text(FText::FromString(TEXT("Apply Global Default Rules")))
-					]
-				]
-
-				+ SVerticalBox::Slot()
-				.AutoHeight()
-				[
-					SNew(SUniformGridPanel)
-					.SlotPadding(6.f)
-
-					+ SUniformGridPanel::Slot(0, 0)
-					[
-						SNew(SButton)
-						.Text(FText::FromString(TEXT("Create")))
-						.OnClicked_Lambda([&DialogWindow, &ApplyDefaultsCheckBox, &bCreateConfirmed, &bApplyGlobalDefaults]()
-						{
-							bCreateConfirmed = true;
-							bApplyGlobalDefaults = !ApplyDefaultsCheckBox.IsValid() || ApplyDefaultsCheckBox->IsChecked();
-
-							if (DialogWindow.IsValid())
-							{
-								DialogWindow->RequestDestroyWindow();
-							}
-							return FReply::Handled();
-						})
-					]
-
-					+ SUniformGridPanel::Slot(1, 0)
-					[
-						SNew(SButton)
-						.Text(FText::FromString(TEXT("Cancel")))
-						.OnClicked_Lambda([&DialogWindow]()
-						{
-							if (DialogWindow.IsValid())
-							{
-								DialogWindow->RequestDestroyWindow();
-							}
-							return FReply::Handled();
-						})
-					]
-				]
-			]
-		);
-
-		if (GEditor && DialogWindow.IsValid())
-		{
-			GEditor->EditorAddModalWindow(DialogWindow.ToSharedRef());
-		}
-
-		return bCreateConfirmed;
 	}
 
 	void OpenLevelRulesWindow(
-		ULevelPreloadDatabase* DatabaseAsset,
+		ULevelPreloadDatabaseLPT* DatabaseAsset,
 		const TSoftObjectPtr<UWorld>& LevelSoftPtr,
 		const FString& LevelDisplayName,
 		bool bIsWorldPartition,
-		const TFunction<bool(ULevelPreloadDatabase*)>& SaveDatabaseAssetFn
+		const TFunction<bool(ULevelPreloadDatabaseLPT*)>& SaveDatabaseAssetFn
 	)
 	{
 		if (!DatabaseAsset)
@@ -130,17 +69,16 @@ namespace SlateWidgetLPT
 			return;
 		}
 
-		const FLevelPreloadEntry* ExistingEntry = DatabaseAsset->FindEntryByLevel(LevelSoftPtr);
+		const FLevelPreloadEntryLPT* ExistingEntry = DatabaseAsset->FindEntryByLevel(LevelSoftPtr);
 		if (!ExistingEntry)
 		{
 			return;
 		}
 
-		TSharedPtr<FStructOnScope> RulesStructOnScope = MakeShared<FStructOnScope>(FLPTLevelRules::StaticStruct());
-		if (FLPTLevelRules* WorkingRules = reinterpret_cast<FLPTLevelRules*>(RulesStructOnScope->GetStructMemory()))
+		UAssetFilterSettingsLPT* FilterSettingsAsset = ExistingEntry->FilterSettings.LoadSynchronous();
+		if (!FilterSettingsAsset)
 		{
-			*WorkingRules = ExistingEntry->Rules;
-			WorkingRules->bRulesInitializedFromGlobalDefaults = IsGlobalDefaultsEnabled(*ExistingEntry);
+			return;
 		}
 
 		FPropertyEditorModule& PropertyEditorModule = FModuleManager::LoadModuleChecked<FPropertyEditorModule>("PropertyEditor");
@@ -150,22 +88,12 @@ namespace SlateWidgetLPT
 		DetailsViewArgs.bUpdatesFromSelection = false;
 		DetailsViewArgs.NameAreaSettings = FDetailsViewArgs::HideNameArea;
 
-		FStructureDetailsViewArgs StructureDetailsViewArgs;
-		StructureDetailsViewArgs.bShowObjects = true;
-		StructureDetailsViewArgs.bShowAssets = true;
-		StructureDetailsViewArgs.bShowClasses = true;
-		StructureDetailsViewArgs.bShowInterfaces = false;
-
-		const TSharedRef<IStructureDetailsView> StructureDetailsView = PropertyEditorModule.CreateStructureDetailView(
-			DetailsViewArgs,
-			StructureDetailsViewArgs,
-			RulesStructOnScope,
-			FText::FromString(TEXT("Level Rules"))
-		);
+		const TSharedRef<IDetailsView> DetailsView = PropertyEditorModule.CreateDetailView(DetailsViewArgs);
+		DetailsView->SetObject(FilterSettingsAsset);
 
 		const TSharedRef<SWindow> RulesWindow = SNew(SWindow)
 			.Title(FText::FromString(FString::Printf(TEXT("LPT Rules - %s"), *LevelDisplayName)))
-			.ClientSize(FVector2D(760.f, 640.f))
+			.ClientSize(FVector2D(800.f, 680.f))
 			.SupportsMaximize(true)
 			.SupportsMinimize(true);
 
@@ -188,7 +116,7 @@ namespace SlateWidgetLPT
 				.Padding(0.f, 0.f, 0.f, 4.f)
 				[
 					SNew(STextBlock)
-					.Text(FText::FromString(TEXT("These settings affect only the currently opened level.")))
+					.Text(FText::FromString(TEXT("Filter settings are stored in a separate DataAsset and used for collection generation.")))
 				]
 
 				+ SVerticalBox::Slot()
@@ -196,7 +124,7 @@ namespace SlateWidgetLPT
 				.Padding(0.f, 0.f, 0.f, 8.f)
 				[
 					SNew(STextBlock)
-					.Text(FText::FromString(TEXT("Save the level to regenerate the asset preload list.")))
+					.Text(FText::FromString(TEXT("Collection Presets define preconfigured AssetCollectionDataLPT templates for this level.")))
 				]
 
 				+ SVerticalBox::Slot()
@@ -204,15 +132,14 @@ namespace SlateWidgetLPT
 				.Padding(0.f, 0.f, 0.f, 8.f)
 				[
 					SNew(STextBlock)
-					.Visibility_Lambda([RulesStructOnScope, bIsWorldPartition]()
+					.Visibility_Lambda([FilterSettingsAsset, bIsWorldPartition]()
 					{
-						if (!bIsWorldPartition)
+						if (!bIsWorldPartition || !FilterSettingsAsset)
 						{
 							return EVisibility::Collapsed;
 						}
 
-						const FLPTLevelRules* WorkingRules = reinterpret_cast<const FLPTLevelRules*>(RulesStructOnScope->GetStructMemory());
-						return (WorkingRules && !WorkingRules->bAllowWorldPartitionAutoScan) ? EVisibility::Visible : EVisibility::Collapsed;
+						return FilterSettingsAsset->bAllowWorldPartitionAutoScan ? EVisibility::Collapsed : EVisibility::Visible;
 					})
 					.Text(FText::FromString(TEXT("World Partition auto scan is disabled for this level.")))
 				]
@@ -227,7 +154,7 @@ namespace SlateWidgetLPT
 				.FillHeight(1.f)
 				.Padding(0.f, 8.f, 0.f, 8.f)
 				[
-					StructureDetailsView->GetWidget().ToSharedRef()
+					DetailsView
 				]
 
 				+ SVerticalBox::Slot()
@@ -240,34 +167,26 @@ namespace SlateWidgetLPT
 					[
 						SNew(SButton)
 						.Text(FText::FromString(TEXT("Save Rules")))
-						.OnClicked_Lambda([DatabaseAsset, LevelSoftPtr, RulesStructOnScope, RulesWindow, SaveDatabaseAssetFn]()
+						.OnClicked_Lambda([DatabaseAsset, FilterSettingsAsset, RulesWindow, SaveDatabaseAssetFn]()
 						{
-							if (!DatabaseAsset)
+							if (FilterSettingsAsset)
 							{
-								return FReply::Handled();
+								FilterSettingsAsset->Modify();
+								FilterSettingsAsset->MarkPackageDirty();
+								FilterSettingsAsset->GetOutermost()->MarkPackageDirty();
+								SaveAssetObject(FilterSettingsAsset);
 							}
 
-							const FLPTLevelRules* WorkingRules = reinterpret_cast<const FLPTLevelRules*>(RulesStructOnScope->GetStructMemory());
-							if (!WorkingRules)
+							if (DatabaseAsset)
 							{
-								return FReply::Handled();
-							}
+								DatabaseAsset->Modify();
+								DatabaseAsset->MarkPackageDirty();
+								DatabaseAsset->GetOutermost()->MarkPackageDirty();
 
-							FLevelPreloadEntry* MutableEntry = DatabaseAsset->FindEntryByLevel(LevelSoftPtr);
-							if (!MutableEntry)
-							{
-								return FReply::Handled();
-							}
-
-							DatabaseAsset->Modify();
-							MutableEntry->Rules = *WorkingRules;
-							MutableEntry->bRulesInitializedFromGlobalDefaults = MutableEntry->Rules.bRulesInitializedFromGlobalDefaults;
-							DatabaseAsset->MarkPackageDirty();
-							DatabaseAsset->GetOutermost()->MarkPackageDirty();
-
-							if (SaveDatabaseAssetFn)
-							{
-								SaveDatabaseAssetFn(DatabaseAsset);
+								if (SaveDatabaseAssetFn)
+								{
+									SaveDatabaseAssetFn(DatabaseAsset);
+								}
 							}
 
 							RulesWindow->RequestDestroyWindow();
@@ -299,4 +218,3 @@ namespace SlateWidgetLPT
 		}
 	}
 }
-

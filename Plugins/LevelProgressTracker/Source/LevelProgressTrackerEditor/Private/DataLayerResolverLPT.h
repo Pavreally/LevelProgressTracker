@@ -10,6 +10,6 @@ class UWorld;
 namespace DataLayerResolverLPT
 {
 	void AddDataLayerNameWithVariants(FName InName, TArray<FName>& InOutNames);
-	void ResolveWorldPartitionRegionRulesAsDataLayers(UWorld* World, FLPTLevelRules& InOutRules);
+	void ResolveWorldPartitionRegionRulesAsDataLayers(UWorld* World, FLPTFilterSettings& InOutRules);
 }
 

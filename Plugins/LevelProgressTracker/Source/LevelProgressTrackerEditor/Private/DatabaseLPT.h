@@ -2,11 +2,11 @@
 
 #pragma once
 
-class ULevelPreloadDatabase;
+class ULevelPreloadDatabaseLPT;
 class ULevelProgressTrackerSettings;
 
 namespace DatabaseLPT
 {
-	ULevelPreloadDatabase* GetOrCreateDatabaseAsset(const ULevelProgressTrackerSettings* Settings);
-	bool SaveDatabaseAsset(ULevelPreloadDatabase* DatabaseAsset);
+	ULevelPreloadDatabaseLPT* GetOrCreateDatabaseAsset(const ULevelProgressTrackerSettings* Settings);
+	bool SaveDatabaseAsset(ULevelPreloadDatabaseLPT* DatabaseAsset);
 }

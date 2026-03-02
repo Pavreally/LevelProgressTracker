@@ -53,13 +53,9 @@ struct FLPTAssetClassFilter
  * Filtering and World Partition generation rules used by a single level entry.
  */
 USTRUCT(BlueprintType)
-struct FLPTLevelRules
+struct FLPTFilterSettings
 {
 	GENERATED_BODY()
-
-	/* Enables merge with global defaults during generation. Level rules are merged first, then global defaults are applied and override conflicting options. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Global Filtering")
-	bool bRulesInitializedFromGlobalDefaults = false;
 
 	/* Class-category filter used for automatically collected preload candidates. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Class Filtering")
@@ -88,6 +84,10 @@ struct FLPTLevelRules
 	/* Enables safe World Partition actor scan using only currently loaded actors. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Partition")
 	bool bAllowWorldPartitionAutoScan = false;
+
+	/* Allows full World Partition actor scan with no Data Layer/Cell scope. Disabled by default to avoid accidental heavy generation. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Partition")
+	bool bAllowWorldPartitionUnscopedAutoScan = false;
 
 	/* World Partition Data Layer assets used for actor filtering. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Partition", meta = (DisplayName = "Data Layer Assets"))
@@ -123,10 +123,16 @@ public:
 	 * Resolves validated package/object paths for preload database asset.
 	 * DatabaseFolder is a full long package path (for example: "/Game/_DataLPT" or "/PluginName/Data").
 	 */
-	bool ResolveDatabaseAssetPaths(FString &OutDatabaseFolderLongPath, FString &OutDatabasePackagePath, FSoftObjectPath &OutDatabaseObjectPath) const;
+	bool ResolveDatabaseAssetPaths(FString& OutDatabaseFolderLongPath, FString& OutDatabasePackagePath, FSoftObjectPath& OutDatabaseObjectPath) const;
 
-	/** Copies global defaults into per-level rules when a new level entry is created. */
-	void BuildGlobalDefaultRules(FLPTLevelRules &OutRules) const;
+	/** Resolves validated long package folder path for collection DataAssets. */
+	bool ResolveAssetCollectionFolderPath(FString& OutCollectionFolderLongPath) const;
+
+	/** Resolves validated long package folder path for filter settings DataAssets. */
+	bool ResolveFilterSettingsFolderPath(FString& OutFilterSettingsFolderLongPath) const;
+
+	/** Copies project defaults used for newly created filter settings assets. */
+	void BuildGlobalDefaultRules(FLPTFilterSettings& OutRules) const;
 
 #if WITH_EDITOR
 	DECLARE_MULTICAST_DELEGATE_OneParam(FOnOpenLevelRulesEditorRequested, ULevelProgressTrackerSettings *);
@@ -136,52 +142,32 @@ public:
 	/** Opens the per-level rules editor for the currently opened level. */
 	void OpenLevelRulesEditorForCurrentLevel();
 
-	/* Folder for LevelPreloadDatabase asset. Use Content Browser paths such as '/Game/_DataLPT' or '/PluginName/Data'. */
-	UPROPERTY(EditAnywhere, Config, Category = "Database", meta = (ToolTip = "Folder for LevelPreloadDatabase asset. Use Content Browser paths such as '/Game/_DataLPT' or '/PluginName/Data'.", ContentDir, LongPackageName, ForceShowPluginContent))
+	/* Folder for LevelPreloadDatabaseLPT asset. Use Content Browser paths such as '/Game/_DataLPT' or '/PluginName/Data'. */
+	UPROPERTY(EditAnywhere, Config, Category = "Database", meta = (ToolTip = "Folder for LevelPreloadDatabaseLPT asset. Use Content Browser paths such as '/Game/_DataLPT' or '/PluginName/Data'.", ContentDir, LongPackageName, ForceShowPluginContent))
 	FDirectoryPath DatabaseFolder;
+
+	/* Folder for AssetCollectionDataLPT assets. If empty, defaults to '<Database Folder>/AssetList'. */
+	UPROPERTY(EditAnywhere, Config, Category = "Database", meta = (ToolTip = "Folder for AssetCollectionDataLPT assets. If empty, defaults to '<Database Folder>/AssetList'.", ContentDir, LongPackageName, ForceShowPluginContent))
+	FDirectoryPath AssetCollectionFolder;
+
+	/* Folder for AssetFilterSettingsLPT assets. If empty, defaults to '<Database Folder>/AssetFilterSettings'. */
+	UPROPERTY(EditAnywhere, Config, Category = "Database", meta = (ToolTip = "Folder for AssetFilterSettingsLPT assets. If empty, defaults to '<Database Folder>/AssetFilterSettings'.", ContentDir, LongPackageName, ForceShowPluginContent))
+	FDirectoryPath AssetFilterSettingsFolder;
 
 	/* Enables automatic database generation when a level package is saved. */
 	UPROPERTY(EditAnywhere, Config, Category = "Generation")
 	bool bAutoGenerateOnLevelSave = true;
 
-	/* Class-category filter used for automatically collected preload candidates. Explicit asset rules are not affected by this filter. */
+	/* Default class-category filter used when creating new AssetFilterSettingsLPT assets. */
 	UPROPERTY(EditAnywhere, Config, Category = "Global Rule Defaults - Class Filter", meta = (ToolTip = "Class-category filter used for automatically collected preload candidates. Explicit asset rules are not affected by this filter."))
 	FLPTAssetClassFilter AssetClassFilter;
 
-	/* Exclusion mode: true removes matching assets, false keeps only matching assets. */
-	UPROPERTY(EditAnywhere, Config, Category = "Global Rule Defaults", meta = (ToolTip = "Exclusion mode: true removes matching assets, false keeps only matching assets."))
-	bool bUseExclusionMode = false;
-
-	/* Asset path rules evaluated by exact long package name match. */
-	UPROPERTY(EditAnywhere, Config, Category = "Global Rule Defaults", meta = (ToolTip = "Asset path rules evaluated by exact long package name match."))
-	TArray<FSoftObjectPath> AssetRules;
-
-	/* Folder rules evaluated by long package name prefix match. Use Content Browser paths such as '/Game/Folder' or '/PluginName/Folder'. */
-	UPROPERTY(EditAnywhere, Config, Category = "Global Rule Defaults", meta = (ToolTip = "Folder rules evaluated by long package name prefix match. Use Content Browser paths such as '/Game/Folder' or '/PluginName/Folder'.", ContentDir, LongPackageName, ForceShowPluginContent))
-	TArray<FDirectoryPath> FolderRules;
-
-	/* If true, preload assets are requested in chunks. If false, all assets are requested as one aggregated batch. */
+	/* Default preload mode used when creating new AssetFilterSettingsLPT assets. */
 	UPROPERTY(EditAnywhere, Config, Category = "Global Rule Defaults - Preload Progress", meta = (ToolTip = "If true, preload assets are requested in chunks. If false, all assets are requested as one aggregated batch."))
 	bool bUseChunkedPreload = true;
 
-	/* Number of assets per preload chunk. 1 means per-asset loading; larger values batch assets to reduce overhead. */
+	/* Default number of assets per preload chunk used when creating new AssetFilterSettingsLPT assets. */
 	UPROPERTY(EditAnywhere, Config, Category = "Global Rule Defaults - Preload Progress", meta = (ClampMin = "1", UIMin = "1", ToolTip = "Number of assets per preload chunk. 1 means per-asset loading; larger values batch assets into groups for better performance."))
 	int32 PreloadChunkSize = 32;
-
-	/* Enables safe World Partition actor scan using only currently loaded actors. */
-	UPROPERTY(EditAnywhere, Config, Category = "Global Rule Defaults - WorldPartition", meta = (ToolTip = "Enables safe World Partition actor scan using only currently loaded actors."))
-	bool bAllowWorldPartitionAutoScan = false;
-
-	/* World Partition Data Layer assets used for actor filtering. */
-	UPROPERTY(EditAnywhere, Config, Category = "Global Rule Defaults - WorldPartition", meta = (DisplayName = "Data Layer Assets", ToolTip = "World Partition Data Layer assets used for actor filtering."))
-	TArray<TSoftObjectPtr<UDataLayerAsset>> WorldPartitionDataLayerAssets;
-
-	/* World Partition Data Layer names used for actor filtering when no asset reference is available. */
-	UPROPERTY(EditAnywhere, Config, Category = "Global Rule Defaults - WorldPartition", meta = (DisplayName = "Data Layer Names", AdvancedDisplay, ToolTip = "World Partition Data Layer names used for actor filtering when no asset reference is available."))
-	TArray<FName> WorldPartitionRegions;
-
-	/* World Partition cell tokens evaluated by long package name substring match. */
-	UPROPERTY(EditAnywhere, Config, Category = "Global Rule Defaults - WorldPartition", meta = (DisplayName = "Cell Rules", ToolTip = "World Partition cell tokens evaluated by long package name substring match."))
-	TArray<FString> WorldPartitionCells;
 };
 
