@@ -11,23 +11,9 @@ LPT is a plugin for Unreal Engine 5 that allows you to quickly and easily create
 ## Latest Updates
 `Experimental`
 
-`Version 1.4.0`
-- The plugin has been upgraded to a new major version due to a significant overhaul of the asset filtering setup approach and the addition of much more flexible support for World Partition levels.
-- All configuration settings are now stored in dedicated Data Assets, unique to each level.
-This greatly improves optimization and management when working with a large number of game levels.
-- Added more flexible configuration of storage paths for asset lists and their filtering rules.
-- For World Partition levels, Asset Collections have been introduced.
-This means that for each Data Layer, you can now pre-create an asset collection and preload it procedurally — even before the level is opened — in a already packaged, shipping build of the game.
-During level loading, you can load these collections either
-<br> - by tag (loading an entire group at once), or
-<br> - individually by specific keys.
-<br>Example use case: In one session you can preload the boss arena section ahead of time, while in the next session you preload the checkpoint area instead.
-
-- Complete global code refactoring and optimization.
-- Added widget filtering option.
-- Fixed and significantly improved asset filtering logic during the level database list creation stage.
-- Introduced the ability to manually set per-level asset preloading step size, allowing you to balance precision and performance individually for each level.
-
+`Version 1.4.1`
+- Built for Unreal Engine 5.7.4.
+- Fixed an issue with asset generation during the cooking process of World Partition levels.
 
 ## What it's for
 - Tracking the progress of level asset loading.
@@ -47,6 +33,8 @@ You can choose one of three approaches:
 - Built-in functions for loading screens — simply add your UMG widget, and it will function as a Slate widget. This means that your specified UMG widget will not be forcibly closed during a level transition.
 - Powerful global asset filtering system. You can add individual assets, entire folders, Data Layers or Cells either as exclusions (blacklist) or as allowed items only (whitelist / inverse mode).
 - Convenient plugin button that lets you quickly configure filtering rules specifically for the current level right from the editor.
+- Preload asset list collections that can be loaded by tag (highly useful when working with World Partition levels).
+- The "Preload Chunk Size" option allows you to specify the amount of assets loaded per single operation. Lower values offer higher precision but result in slower loading times.
 
 ## Install
 
@@ -55,7 +43,7 @@ You can choose one of three approaches:
 
 1. Make sure the Unreal Engine editor is closed.
 2. Move the "Plugins" folder to the root folder of your created project.
-3. Run your project to which the "Plugins" folder with 'LevelProgressTracker' was added. If a message about restoring the module appears, select "Yes".
+3. Rebuild the project in your C++ IDE.
 4. Done! The 'Level Progress Tracker' folders should appear in the Unreal Engine browser and the plugin should be automatically activated. If the plugin folder is not visible, activate visibility through the browser settings: `Settings > Show Plugin Content`.
 
 ## How to use it?

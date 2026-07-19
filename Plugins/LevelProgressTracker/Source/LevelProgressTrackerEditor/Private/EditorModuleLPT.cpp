@@ -148,6 +148,11 @@ void FLevelProgressTrackerEditorModule::HandleToolbarOpenLevelRulesClicked()
 
 void FLevelProgressTrackerEditorModule::OnPackageSaved(const FString& PackageFilename, UPackage* SavedPackage, FObjectPostSaveContext SaveContext)
 {
+	if (IsRunningCookCommandlet())
+	{
+		return;
+	}
+
 	(void)PackageFilename;
 	(void)SaveContext;
 
