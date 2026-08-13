@@ -3,6 +3,198 @@
 #include "SubsytemLPT.h"
 #include "Engine/Level.h"
 #include "Engine/StreamableManager.h"
+#include "GameFramework/Actor.h"
+#include "LevelInstance/LevelInstanceInterface.h"
+#include "LevelInstance/LevelInstanceLevelStreaming.h"
+#include "Streaming/LevelStreamingDelegates.h"
+
+FName ULevelProgressTrackerSubsytem::GetLevelStateKey(const ULevelStreaming* StreamingLevel) const
+{
+	return StreamingLevel ? FName(*StreamingLevel->GetPathName()) : NAME_None;
+}
+
+void ULevelProgressTrackerSubsytem::OnLevelStreamingTargetStateChanged(
+	UWorld* World,
+	const ULevelStreaming* StreamingLevel,
+	ULevel* LevelIfLoaded,
+	ELevelStreamingState CurrentState,
+	ELevelStreamingTargetState PreviousTarget,
+	ELevelStreamingTargetState NewTarget)
+{
+	(void)LevelIfLoaded;
+	(void)CurrentState;
+	(void)PreviousTarget;
+
+	if (bIsDeinitializing || bCreatingLPTStreamingLevel || !World || World != GetWorld() || !StreamingLevel)
+	{
+		return;
+	}
+
+	if (NewTarget == ELevelStreamingTargetState::Unloaded ||
+		NewTarget == ELevelStreamingTargetState::UnloadedAndRemoved)
+	{
+		return;
+	}
+
+	if (ULevelStreamingLevelInstance* LevelInstanceStreaming = Cast<ULevelStreamingLevelInstance>(const_cast<ULevelStreaming*>(StreamingLevel)))
+	{
+		TrackExternalLevelInstance(LevelInstanceStreaming);
+	}
+}
+
+void ULevelProgressTrackerSubsytem::OnLevelStreamingStateChanged(
+	UWorld* World,
+	const ULevelStreaming* StreamingLevel,
+	ULevel* LevelIfLoaded,
+	ELevelStreamingState PreviousState,
+	ELevelStreamingState NewState)
+{
+	(void)LevelIfLoaded;
+	(void)PreviousState;
+
+	if (bIsDeinitializing || !World || World != GetWorld() || !StreamingLevel)
+	{
+		return;
+	}
+
+	ULevelStreamingLevelInstance* LevelInstanceStreaming = Cast<ULevelStreamingLevelInstance>(const_cast<ULevelStreaming*>(StreamingLevel));
+	if (!LevelInstanceStreaming)
+	{
+		return;
+	}
+
+	if (NewState == ELevelStreamingState::Removed || NewState == ELevelStreamingState::FailedToLoad)
+	{
+		RemoveExternalLevelInstance(LevelInstanceStreaming);
+	}
+}
+
+void ULevelProgressTrackerSubsytem::TrackExternalLevelInstance(ULevelStreamingLevelInstance* StreamingLevel)
+{
+	if (bIsDeinitializing || !IsValid(StreamingLevel) || !StreamingLevel->GetWorldAsset().ToSoftObjectPath().IsValid())
+	{
+		return;
+	}
+
+	FName StateKey = GetLevelStateKey(StreamingLevel);
+	if (StateKey.IsNone())
+	{
+		return;
+	}
+
+	const TSoftObjectPtr<UWorld> LevelSoftPtr = StreamingLevel->GetWorldAsset();
+	TSharedPtr<FLevelState> ExistingState;
+	if (ILevelInstanceInterface* LevelInstance = StreamingLevel->GetLevelInstance())
+	{
+		AActor* LevelInstanceActor = Cast<AActor>(LevelInstance);
+		if (LevelInstanceActor)
+		{
+			for (const TPair<FName, TSharedPtr<FLevelState>>& Level : LevelLoadedMap)
+			{
+				if (Level.Value.IsValid() && Level.Value->ExistingLevelInstanceActor.Get() == LevelInstanceActor)
+				{
+					StateKey = Level.Key;
+					ExistingState = Level.Value;
+					break;
+				}
+			}
+		}
+	}
+
+	if (ExistingState.IsValid())
+	{
+		ExistingState->LevelInstanceState.LevelReference = StreamingLevel;
+		ExistingState->bExternallyManaged = true;
+		ExistingState->bLoadExistingLevelInstance = false;
+
+		StreamingLevel->OnLevelShown.AddDynamic(
+			this,
+			&ULevelProgressTrackerSubsytem::OnLevelShown
+		);
+
+		if (StreamingLevel->GetLevelStreamingState() == ELevelStreamingState::LoadedVisible)
+		{
+			OnLevelShown();
+		}
+		return;
+	}
+
+	if (LevelLoadedMap.Contains(StateKey))
+	{
+		return;
+	}
+
+	TSharedRef<FLevelState> LevelState = MakeShared<FLevelState>();
+	LevelState->LevelSoftPtr = LevelSoftPtr;
+	LevelState->LevelName = FName(LevelSoftPtr.ToSoftObjectPath().GetAssetName());
+	LevelState->LoadMethod = ELevelLoadMethod::LevelStreaming;
+	LevelState->LevelInstanceState.LevelReference = StreamingLevel;
+	LevelState->bExternallyManaged = true;
+	if (ILevelInstanceInterface* LevelInstance = StreamingLevel->GetLevelInstance())
+	{
+		LevelState->ExistingLevelInstanceActor = Cast<AActor>(LevelInstance);
+	}
+	LevelState->LoadOptions = FLPTLoadOptions();
+
+	LevelLoadedMap.Add(StateKey, LevelState);
+
+	// The engine owns this streaming object. LPT only observes it and retains
+	// preload handles; it must never create a second streaming level here.
+	StreamingLevel->OnLevelShown.AddDynamic(
+		this,
+		&ULevelProgressTrackerSubsytem::OnLevelShown
+	);
+
+	StartPreloadingResources(
+		StateKey,
+		LevelSoftPtr,
+		LevelState,
+		true,
+		LevelState->LoadOptions
+	);
+
+	// This also covers a reused streaming object that was already visible before
+	// the observer saw its target-state notification.
+	if (StreamingLevel->GetLevelStreamingState() == ELevelStreamingState::LoadedVisible)
+	{
+		OnLevelShown();
+	}
+}
+
+void ULevelProgressTrackerSubsytem::RemoveExternalLevelInstance(ULevelStreamingLevelInstance* StreamingLevel)
+{
+	if (!StreamingLevel)
+	{
+		return;
+	}
+
+	const FName StateKey = GetLevelStateKey(StreamingLevel);
+	TSharedPtr<FLevelState> LevelState = LevelLoadedMap.FindRef(StateKey);
+	FName MatchedStateKey = StateKey;
+	if (!LevelState.IsValid())
+	{
+		for (const TPair<FName, TSharedPtr<FLevelState>>& Level : LevelLoadedMap)
+		{
+			if (Level.Value.IsValid() && Level.Value->LevelInstanceState.LevelReference.Get() == StreamingLevel)
+			{
+				MatchedStateKey = Level.Key;
+				LevelState = Level.Value;
+				break;
+			}
+		}
+	}
+	if (!LevelState.IsValid() || !LevelState->bExternallyManaged)
+	{
+		return;
+	}
+
+	StreamingLevel->OnLevelShown.RemoveDynamic(
+		this,
+		&ULevelProgressTrackerSubsytem::OnLevelShown
+	);
+	ReleaseLevelStateHandles(LevelState.ToSharedRef(), true);
+	LevelLoadedMap.Remove(MatchedStateKey);
+}
 
 void ULevelProgressTrackerSubsytem::HandleAssetLoaded(TSharedRef<FStreamableHandle> Handle, FName PackagePath, TSharedRef<FLevelState> LevelState)
 {
@@ -20,12 +212,18 @@ void ULevelProgressTrackerSubsytem::OnAllAssetsLoaded(FName PackagePath, bool bI
 {
 	LevelState->PreloadPaths.Reset();
 	LevelState->NextPreloadPathIndex = 0;
+	LevelState->bPreloadCompleted = true;
 
 	// Ensure LoadedAssets equals TotalAssets for accurate 100% reporting
 	LevelState->LoadedAssets = LevelState->TotalAssets;
 
 	// Broadcast final progress and loaded events
 	OnLevelLoadProgressLPT.Broadcast(LevelState->LevelSoftPtr, LevelState->LevelName, 1.f, LevelState->LoadedAssets, LevelState->TotalAssets);
+
+	if (LevelState->bExternallyManaged && LevelState->bLevelShown)
+	{
+		ReleaseLevelStateHandles(LevelState, false);
+	}
 
 	StartLevelLPT(PackagePath, bIsStreamingLevel, LevelState);
 }
@@ -109,11 +307,14 @@ void ULevelProgressTrackerSubsytem::OnLevelShown()
 		const FName& PackageName = Level.Key;
 		TSharedPtr<FLevelState>& LevelState = Level.Value;
 
-		if (LevelState->LoadMethod == ELevelLoadMethod::LevelStreaming &&
+		ULevelStreamingDynamic* StreamingLevel = LevelState.IsValid() ? LevelState->LevelInstanceState.LevelReference.Get() : nullptr;
+		if (LevelState.IsValid() &&
+				LevelState->LoadMethod == ELevelLoadMethod::LevelStreaming &&
 				!LevelState->LevelInstanceState.IsLoaded &&
-				LevelState->LevelInstanceState.LevelReference &&
-				LevelState->LevelInstanceState.LevelReference->HasLoadedLevel() &&
-				LevelState->LevelInstanceState.LevelReference->GetLoadedLevel()->bIsVisible)
+				IsValid(StreamingLevel) &&
+				StreamingLevel->HasLoadedLevel() &&
+				StreamingLevel->GetLoadedLevel() &&
+				StreamingLevel->GetLoadedLevel()->bIsVisible)
 		{
 			// Mark for cleanup after iteration
 			PackagesToRemove.Add(PackageName);
@@ -129,20 +330,34 @@ void ULevelProgressTrackerSubsytem::OnLevelShown()
 			continue;
 		}
 
+		ULevelStreamingDynamic* StreamingLevel = LevelState->LevelInstanceState.LevelReference.Get();
+		if (!IsValid(StreamingLevel))
+		{
+			continue;
+		}
+
 		// Unsubscribe the level display delegate
-		LevelState->LevelInstanceState.LevelReference->OnLevelShown.RemoveDynamic(
+		StreamingLevel->OnLevelShown.RemoveDynamic(
 				this,
 				&ULevelProgressTrackerSubsytem::OnLevelShown
 			);
 
-		// Release preload handles
-		ReleaseLevelStateHandles(LevelState.ToSharedRef(), false);
-
 		// Mark as loaded
 		LevelState->LevelInstanceState.IsLoaded = true;
+		LevelState->bLevelShown = true;
 
-		// Notification
-		OnLevelLoadedLPT.Broadcast(LevelState->LevelSoftPtr, LevelState->LevelName);
+		if (!LevelState->bLoadedNotificationSent)
+		{
+			LevelState->bLoadedNotificationSent = true;
+			OnLevelLoadedLPT.Broadcast(LevelState->LevelSoftPtr, LevelState->LevelName);
+		}
+
+		// An externally managed Level Instance can become visible before LPT's
+		// optional preload finishes. Keep those handles alive until completion.
+		if (LevelState->bPreloadCompleted || !LevelState->bExternallyManaged)
+		{
+			ReleaseLevelStateHandles(LevelState.ToSharedRef(), false);
+		}
 	}
 }
 

@@ -150,6 +150,14 @@ void FLevelProgressTrackerEditorModule::OnPackageSaved(const FString& PackageFil
 {
 	if (IsRunningCookCommandlet())
 	{
+		// PackageSavedWithContextEvent is also emitted by Cook. LPT generation is
+		// an editor-only mutation and must never create or save assets during Cook.
+		return;
+	}
+
+	if (bIsGenerating)
+	{
+		// Rebuilding saves LPT assets, which emits this event recursively.
 		return;
 	}
 
@@ -188,7 +196,7 @@ void FLevelProgressTrackerEditorModule::OnPackageSaved(const FString& PackageFil
 			return;
 		}
 
-		UE_LOG(LogLPTEditor, Log, TEXT("Detected WP external package save '%s'. Rebuilding for '%s'."),
+		UE_LOG(LogLPTEditor, Log, TEXT("Detected WP external package save '%s'. Checking LPT state for '%s'."),
 			*SavedPackageName,
 			*EditorWorld->GetOutermost()->GetName()
 		);
@@ -267,6 +275,8 @@ void FLevelProgressTrackerEditorModule::RebuildLevelDependencies(UWorld* SavedWo
 	const FSoftObjectPath LevelObjectPath(FString::Printf(TEXT("%s.%s"), *LevelPackagePath, *LevelAssetName));
 	const TSoftObjectPtr<UWorld> LevelSoftPtr(LevelObjectPath);
 
+	TGuardValue<bool> GenerationGuard(bIsGenerating, true);
+
 	ULevelPreloadDatabaseLPT* DatabaseAsset = GetOrCreateDatabaseAsset(Settings);
 	if (!DatabaseAsset)
 	{
@@ -274,6 +284,7 @@ void FLevelProgressTrackerEditorModule::RebuildLevelDependencies(UWorld* SavedWo
 		return;
 	}
 
+	const int32 LevelCountBeforeNormalization = DatabaseAsset->Levels.Num();
 	bool bWasEntryAdded = false;
 	FLevelPreloadEntryLPT* LevelEntry = DatabaseAsset->FindOrAddEntryByLevel(LevelSoftPtr, bWasEntryAdded);
 	if (!LevelEntry)
@@ -281,10 +292,10 @@ void FLevelProgressTrackerEditorModule::RebuildLevelDependencies(UWorld* SavedWo
 		UE_LOG(LogLPTEditor, Warning, TEXT("Failed to create or resolve database entry for '%s'."), *LevelPackagePath);
 		return;
 	}
-
-	DatabaseAsset->Modify();
+	const bool bDatabaseStructureChanged = DatabaseAsset->Levels.Num() != LevelCountBeforeNormalization;
 
 	UAssetFilterSettingsLPT* FilterSettingsAsset = LevelEntry->FilterSettings.LoadSynchronous();
+	bool bFilterSettingsCreated = false;
 	if (!FilterSettingsAsset)
 	{
 		FilterSettingsAsset = EditorModuleLPTPrivate::GetOrCreateFilterSettingsAsset(Settings, LevelAssetName);
@@ -295,9 +306,20 @@ void FLevelProgressTrackerEditorModule::RebuildLevelDependencies(UWorld* SavedWo
 		}
 
 		LevelEntry->FilterSettings = FilterSettingsAsset;
+		bFilterSettingsCreated = true;
 	}
 
-	EditorModuleLPTPrivate::MaterializeCollectionPresets(Settings, LevelAssetName, FilterSettingsAsset, *LevelEntry);
+	const int32 CollectionCountBeforeNormalization = LevelEntry->Collections.Num();
+	ULevelPreloadDatabaseLPT::DeduplicateCollections(*LevelEntry);
+	bool bEntryCollectionsChanged = LevelEntry->Collections.Num() != CollectionCountBeforeNormalization;
+
+	const bool bCollectionsMaterialized = EditorModuleLPTPrivate::MaterializeCollectionPresets(
+		Settings,
+		LevelAssetName,
+		FilterSettingsAsset,
+		*LevelEntry
+	);
+	bEntryCollectionsChanged |= bCollectionsMaterialized;
 
 	if (LevelEntry->Collections.IsEmpty())
 	{
@@ -311,12 +333,44 @@ void FLevelProgressTrackerEditorModule::RebuildLevelDependencies(UWorld* SavedWo
 		}
 	}
 
-	ULevelPreloadDatabaseLPT::DeduplicateCollections(*LevelEntry);
+	bEntryCollectionsChanged |= LevelEntry->Collections.Num() != CollectionCountBeforeNormalization;
 
 	const bool bIsWorldPartition = SavedWorld->IsPartitionedWorld();
 	const FLPTFilterSettings BaseRules = FilterSettingsAsset ? FilterSettingsAsset->ToFilterSettings() : FLPTFilterSettings();
 
-	LevelEntry->LevelStateHash = EditorModuleLPTPrivate::ComputeLevelStateHash(SavedWorld, BaseRules);
+	bool bCollectionPreparationChanged = false;
+	for (const TSoftObjectPtr<UAssetCollectionDataLPT>& CollectionRef : LevelEntry->Collections)
+	{
+		UAssetCollectionDataLPT* CollectionAsset = CollectionRef.LoadSynchronous();
+		if (!CollectionAsset)
+		{
+			continue;
+		}
+
+		bCollectionPreparationChanged |= EditorModuleLPTPrivate::ResolveCollectionTargetDataLayerAssetsFromNames(SavedWorld, CollectionAsset);
+		bCollectionPreparationChanged |= EditorModuleLPTPrivate::DeduplicateCollectionAssetData(CollectionAsset);
+	}
+
+	const uint32 CurrentLevelStateHash = EditorModuleLPTPrivate::ComputeLevelStateHash(SavedWorld, BaseRules);
+	const bool bLevelStateChanged = LevelEntry->LevelStateHash != CurrentLevelStateHash;
+	const bool bNeedsGeneration = bDatabaseStructureChanged ||
+		bWasEntryAdded ||
+		bFilterSettingsCreated ||
+		bEntryCollectionsChanged ||
+		bCollectionPreparationChanged ||
+		bLevelStateChanged;
+
+	if (!bNeedsGeneration)
+	{
+		UE_LOG(LogLPTEditor, Verbose, TEXT("Skipping unchanged LPT generation for '%s' (LevelStateHash=%u)."),
+			*LevelPackagePath,
+			CurrentLevelStateHash
+		);
+		return;
+	}
+	DatabaseAsset->Modify();
+
+	LevelEntry->LevelStateHash = CurrentLevelStateHash;
 	LevelEntry->GenerationTimestamp = FDateTime::UtcNow();
 
 	if (bIsWorldPartition && !BaseRules.bAllowWorldPartitionAutoScan)

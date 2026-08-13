@@ -7,6 +7,9 @@
 #include "Engine/StreamableManager.h"
 #include "Engine/AssetManager.h"
 #include "Kismet/GameplayStatics.h"
+#include "GameFramework/Actor.h"
+#include "LevelInstance/LevelInstanceInterface.h"
+#include "LevelInstance/LevelInstanceLevelStreaming.h"
 
 namespace
 {
@@ -122,6 +125,77 @@ void ULevelProgressTrackerSubsytem::LoadLevelInstanceLPT(TSoftObjectPtr<UWorld> 
 	LoadLevelInstanceLPT(LevelSoftPtr, Transform, OptionalLevelStreamingClass, bLoadAsTempPackage, PreloadingResources, FLPTLoadOptions());
 }
 
+void ULevelProgressTrackerSubsytem::LoadLevelInstanceWithLPT(AActor* LevelInstanceActor, bool PreloadingResources)
+{
+	LoadLevelInstanceWithLPT(LevelInstanceActor, PreloadingResources, FLPTLoadOptions());
+}
+
+void ULevelProgressTrackerSubsytem::LoadLevelInstanceWithLPT(AActor* LevelInstanceActor, bool PreloadingResources, const FLPTLoadOptions& LoadOptions)
+{
+	PreloadExistingLevelInstanceLPT(LevelInstanceActor, PreloadingResources, LoadOptions);
+}
+
+void ULevelProgressTrackerSubsytem::PreloadExistingLevelInstanceLPT(AActor* LevelInstanceActor, bool PreloadingResources, const FLPTLoadOptions& LoadOptions)
+{
+	if (bIsDeinitializing || !IsValid(LevelInstanceActor))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("LPT (LoadLevelInstanceWithLPT): Invalid Level Instance actor."));
+		return;
+	}
+
+	ILevelInstanceInterface* LevelInstance = Cast<ILevelInstanceInterface>(LevelInstanceActor);
+	if (!LevelInstance || !LevelInstance->IsWorldAssetValid())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("LPT (LoadLevelInstanceWithLPT): Actor '%s' does not implement ILevelInstanceInterface or has no valid World Asset."),
+			*LevelInstanceActor->GetPathName());
+		return;
+	}
+
+	const FName StateKey = FName(*LevelInstanceActor->GetPathName());
+	if (LevelLoadedMap.Contains(StateKey))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("LPT (LoadLevelInstanceWithLPT): Level Instance '%s' is already loading or tracked."),
+			*LevelInstanceActor->GetPathName());
+		return;
+	}
+
+	if (ULevelStreamingLevelInstance* ExistingStreamingLevel = LevelInstance->GetLevelStreaming())
+	{
+		for (const TPair<FName, TSharedPtr<FLevelState>>& Level : LevelLoadedMap)
+		{
+			if (Level.Value.IsValid() &&
+				(Level.Value->ExistingLevelInstanceActor.Get() == LevelInstanceActor ||
+					Level.Value->LevelInstanceState.LevelReference.Get() == ExistingStreamingLevel))
+			{
+				UE_LOG(LogTemp, Warning, TEXT("LPT (LoadLevelInstanceWithLPT): Level Instance '%s' is already tracked."),
+					*LevelInstanceActor->GetPathName());
+				return;
+			}
+		}
+	}
+
+	TSharedRef<FLevelState> LevelState = MakeShared<FLevelState>();
+	LevelState->LevelSoftPtr = LevelInstance->GetWorldAsset();
+	LevelState->LevelName = FName(LevelInstanceActor->GetName());
+	LevelState->LoadMethod = ELevelLoadMethod::LevelStreaming;
+	LevelState->bExternallyManaged = true;
+	LevelState->bLoadExistingLevelInstance = true;
+	LevelState->ExistingLevelInstanceActor = LevelInstanceActor;
+	LevelState->LoadOptions = LoadOptions;
+
+	LevelLoadedMap.Add(StateKey, LevelState);
+
+	if (PreloadingResources)
+	{
+		StartPreloadingResources(StateKey, LevelState->LevelSoftPtr, LevelState, true, LoadOptions);
+	}
+	else
+	{
+		LevelState->bPreloadCompleted = true;
+		StartLevelLPT(StateKey, true, LevelState);
+	}
+}
+
 void ULevelProgressTrackerSubsytem::LoadLevelInstanceLPT(TSoftObjectPtr<UWorld> LevelSoftPtr, const FTransform Transform, TSubclassOf<ULevelStreamingDynamic> OptionalLevelStreamingClass, bool bLoadAsTempPackage, bool PreloadingResources, const FLPTLoadOptions& LoadOptions)
 {
 	if (LevelSoftPtr.IsNull())
@@ -197,6 +271,7 @@ void ULevelProgressTrackerSubsytem::StartPreloadingResources(FName PackagePath, 
 
 		LevelState->TotalAssets = 1;
 		LevelState->LoadedAssets = 1;
+		LevelState->bPreloadCompleted = true;
 		OnLevelLoadProgressLPT.Broadcast(LevelState->LevelSoftPtr, LevelState->LevelName, 1.f, LevelState->LoadedAssets, LevelState->TotalAssets);
 		StartLevelLPT(PackagePath, bIsStreamingLevel, LevelState);
 		return;
@@ -211,6 +286,7 @@ void ULevelProgressTrackerSubsytem::StartPreloadingResources(FName PackagePath, 
 
 		LevelState->TotalAssets = 1;
 		LevelState->LoadedAssets = 1;
+		LevelState->bPreloadCompleted = true;
 		OnLevelLoadProgressLPT.Broadcast(LevelState->LevelSoftPtr, LevelState->LevelName, 1.f, LevelState->LoadedAssets, LevelState->TotalAssets);
 		StartLevelLPT(PackagePath, bIsStreamingLevel, LevelState);
 		return;
@@ -257,6 +333,7 @@ void ULevelProgressTrackerSubsytem::StartPreloadingResources(FName PackagePath, 
 
 	if (Paths.IsEmpty())
 	{
+		LevelState->bPreloadCompleted = true;
 		OnLevelLoadProgressLPT.Broadcast(LevelState->LevelSoftPtr, LevelState->LevelName, 1.f, 0, 0);
 		StartLevelLPT(PackagePath, bIsStreamingLevel, LevelState);
 		return;
@@ -301,6 +378,7 @@ void ULevelProgressTrackerSubsytem::StartPreloadingResources(FName PackagePath, 
 
 		LevelState->TotalAssets = 1;
 		LevelState->LoadedAssets = 1;
+		LevelState->bPreloadCompleted = true;
 		OnLevelLoadProgressLPT.Broadcast(LevelState->LevelSoftPtr, LevelState->LevelName, 1.f, LevelState->LoadedAssets, LevelState->TotalAssets);
 		StartLevelLPT(PackagePath, bIsStreamingLevel, LevelState);
 	}
@@ -375,10 +453,41 @@ void ULevelProgressTrackerSubsytem::StartLevelLPT(FName PackagePath, bool bIsStr
 {
 	if (bIsStreamingLevel)
 	{
+		if (LevelState->bLoadExistingLevelInstance)
+		{
+			AActor* LevelInstanceActor = LevelState->ExistingLevelInstanceActor.Get();
+			ILevelInstanceInterface* LevelInstance = IsValid(LevelInstanceActor)
+				? Cast<ILevelInstanceInterface>(LevelInstanceActor)
+				: nullptr;
+			if (!LevelInstance)
+			{
+				LevelLoadedMap.Remove(PackagePath);
+				return;
+			}
+
+			// Let UE's ULevelInstanceSubsystem create and own the native
+			// ULevelStreamingLevelInstance. LPT only supplies the preload phase.
+			LevelInstance->LoadLevelInstance();
+
+			// If the actor was already loaded, no new streaming-state delegate may
+			// be emitted. Attach immediately in that case.
+			if (ULevelStreamingLevelInstance* StreamingLevel = LevelInstance->GetLevelStreaming())
+			{
+				TrackExternalLevelInstance(StreamingLevel);
+			}
+			return;
+		}
+
+		if (LevelState->bExternallyManaged)
+		{
+			return;
+		}
+
 		// Load Level Instance
 		bool bOutSuccess = false;
 		const FString OptionalLevelNameOverride = TEXT("");
 
+		bCreatingLPTStreamingLevel = true;
 		ULevelStreamingDynamic* StreamingLevel = ULevelStreamingDynamic::LoadLevelInstanceBySoftObjectPtr(
 			this,
 			LevelState->LevelSoftPtr,
@@ -388,6 +497,7 @@ void ULevelProgressTrackerSubsytem::StartLevelLPT(FName PackagePath, bool bIsStr
 			LevelState->LevelInstanceState.OptionalLevelStreamingClass,
 			LevelState->LevelInstanceState.bLoadAsTempPackage
 		);
+		bCreatingLPTStreamingLevel = false;
 
 		if (StreamingLevel)
 		{

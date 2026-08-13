@@ -35,6 +35,12 @@
 struct FStreamableHandle;
 class SWidgetWrapLPT;
 class ULevelPreloadDatabaseLPT;
+class AActor;
+class ULevelStreaming;
+class ULevelStreamingLevelInstance;
+
+enum class ELevelStreamingState : uint8;
+enum class ELevelStreamingTargetState : uint8;
 
 UENUM()
 enum class ELevelLoadMethod : uint8
@@ -65,7 +71,7 @@ struct FLevelInstanceState
 
 public:
 	UPROPERTY()
-	TObjectPtr<ULevelStreamingDynamic> LevelReference = nullptr;
+	TWeakObjectPtr<ULevelStreamingDynamic> LevelReference;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "LPT Subsystem", meta = (ToolTip = "Position and size of the game level."))
 	FTransform Transform;
@@ -124,6 +130,18 @@ public:
 
 	// Runtime collection-selection options used to resolve preload assets from collection data assets.
 	FLPTLoadOptions LoadOptions;
+
+	// True when this state was discovered from an existing UE Level Instance rather than created by LPT.
+	bool bExternallyManaged = false;
+
+	// True for the opt-in API while the engine's Level Instance request is pending.
+	bool bLoadExistingLevelInstance = false;
+	TWeakObjectPtr<AActor> ExistingLevelInstanceActor;
+
+	// External Level Instances can become visible before their optional LPT preload completes.
+	bool bLevelShown = false;
+	bool bPreloadCompleted = false;
+	bool bLoadedNotificationSent = false;
 };
 
 /**
@@ -195,6 +213,30 @@ public:
 	);
 
 	/**
+	 * Preloads resources and then requests loading of an existing Unreal Level Instance actor.
+	 * The actor remains an ordinary ALevelInstance; LPT does not replace or subclass it.
+	 * The actor must implement ILevelInstanceInterface.
+	 * @param LevelInstanceActor Existing Level Instance actor to load through the engine's normal subsystem.
+	 * @param PreloadingResources Before requesting the Level Instance load, its resources are automatically loaded.
+	 * @param LoadOptions Optional collection-selection options. Empty options use collection key "Default".
+	 */
+	UFUNCTION(BlueprintCallable, Category = "LPT Subsystem", meta = (AutoCreateRefTerm = "LoadOptions"))
+	void LoadLevelInstanceWithLPT(
+		AActor* LevelInstanceActor,
+		bool PreloadingResources,
+		const FLPTLoadOptions& LoadOptions
+	);
+
+	void LoadLevelInstanceWithLPT(
+		AActor* LevelInstanceActor,
+		bool PreloadingResources = true
+	);
+
+	/** Stops an opt-in LPT load and forwards the unload request to the existing Level Instance actor. */
+	UFUNCTION(BlueprintCallable, Category = "LPT Subsystem")
+	void UnloadLevelInstanceWithLPT(AActor* LevelInstanceActor);
+
+	/**
 	 * Unloads the streaming level and breaks the reference to cached resources in memory, 
 	 * handing over memory control to the standard Unreal Enigne system.
 	 * @param LevelSoftPtr Soft link to target level.
@@ -263,6 +305,28 @@ private:
 	// Сallback when the global level is fully loaded.
 	void OnPostLoadMapWithWorld(UWorld* LoadedWorld);
 
+	// Observes Level Instance streaming created by ULevelInstanceSubsystem.
+	void OnLevelStreamingTargetStateChanged(
+		UWorld* World,
+		const ULevelStreaming* StreamingLevel,
+		ULevel* LevelIfLoaded,
+		ELevelStreamingState CurrentState,
+		ELevelStreamingTargetState PreviousTarget,
+		ELevelStreamingTargetState NewTarget);
+
+	void OnLevelStreamingStateChanged(
+		UWorld* World,
+		const ULevelStreaming* StreamingLevel,
+		ULevel* LevelIfLoaded,
+		ELevelStreamingState PreviousState,
+		ELevelStreamingState NewState);
+
+	void TrackExternalLevelInstance(ULevelStreamingLevelInstance* StreamingLevel);
+	void RemoveExternalLevelInstance(ULevelStreamingLevelInstance* StreamingLevel);
+	void PreloadExistingLevelInstanceLPT(AActor* LevelInstanceActor, bool PreloadingResources, const FLPTLoadOptions& LoadOptions);
+
+	FName GetLevelStateKey(const ULevelStreaming* StreamingLevel) const;
+
 	// Callback when loading each asset.
 	void HandleAssetLoaded(TSharedRef<FStreamableHandle> Handle, FName PackagePath, TSharedRef<FLevelState> LevelState);
 
@@ -290,5 +354,11 @@ private:
 	// Call after loading the streaming level
 	UFUNCTION()
 	void OnLevelShown();
+
+	// Prevents the observer from registering LPT-owned dynamic streaming levels.
+	bool bCreatingLPTStreamingLevel = false;
+
+	// Set while the subsystem is being torn down. No new streaming requests are valid in this phase.
+	bool bIsDeinitializing = false;
 };
 

@@ -9,6 +9,7 @@ class UWorld;
 namespace AssetUtilsLPT
 {
 	bool IsEngineOrScriptPackage(const FString& LongPackageName);
+	bool IsWorldPartitionExternalPackage(const FString& LongPackageName);
 	FString NormalizeFolderRuleForMerge(const FString& InFolderPath);
 	bool IsExternalPackageOfWorldPartitionLevel(const FString& SavedPackageName, const UWorld* EditorWorld);
 }

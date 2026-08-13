@@ -8,6 +8,8 @@
 #include "Engine/World.h"
 #include "Engine/GameViewportClient.h"
 #include "Engine/StreamableManager.h"
+#include "LevelInstance/LevelInstanceLevelStreaming.h"
+#include "Streaming/LevelStreamingDelegates.h"
 #include "UObject/Package.h"
 #include "SlateWidgetWrapLPT.h"
 
@@ -43,11 +45,41 @@ void ULevelProgressTrackerSubsytem::Initialize(FSubsystemCollectionBase& Collect
 		this,
 		&ULevelProgressTrackerSubsytem::OnPostLoadMapWithWorld
 	);
+
+	// ULevelInstanceSubsystem creates ULevelStreamingLevelInstance objects through
+	// ULevelStreamingDynamic::LoadLevelInstance(). This public engine delegate is
+	// emitted from UWorld::AddStreamingLevel(), before the package load begins.
+	FLevelStreamingDelegates::OnLevelStreamingTargetStateChanged.AddUObject(
+		this,
+		&ULevelProgressTrackerSubsytem::OnLevelStreamingTargetStateChanged
+	);
+	FLevelStreamingDelegates::OnLevelStreamingStateChanged.AddUObject(
+		this,
+		&ULevelProgressTrackerSubsytem::OnLevelStreamingStateChanged
+	);
+
+	// Cover a world whose Level Instances were created before this subsystem
+	// finished binding to the global delegates.
+	if (UWorld* CurrentWorld = GetWorld())
+	{
+		for (const auto& StreamingLevelEntry : CurrentWorld->GetStreamingLevels())
+		{
+			ULevelStreaming* StreamingLevel = StreamingLevelEntry;
+			if (ULevelStreamingLevelInstance* LevelInstanceStreaming = Cast<ULevelStreamingLevelInstance>(StreamingLevel))
+			{
+				TrackExternalLevelInstance(LevelInstanceStreaming);
+			}
+		}
+	}
 }
 
 void ULevelProgressTrackerSubsytem::Deinitialize()
 {
+	bIsDeinitializing = true;
+
 	FCoreUObjectDelegates::PostLoadMapWithWorld.RemoveAll(this);
+	FLevelStreamingDelegates::OnLevelStreamingTargetStateChanged.RemoveAll(this);
+	FLevelStreamingDelegates::OnLevelStreamingStateChanged.RemoveAll(this);
 
 	// Clearing delegates
 	OnLevelLoadProgressLPT.Clear();

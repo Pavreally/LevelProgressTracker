@@ -36,6 +36,9 @@ namespace EditorModuleLPTPrivate
 	const FName StyleSetName(TEXT("LevelProgressTrackerStyle"));
 	const FName ToolbarIconName(TEXT("LevelProgressTracker.LPTRules"));
 	const FName DefaultCollectionKey(TEXT("Default"));
+	// Bump when generated collection semantics change so existing databases are
+	// rebuilt once instead of being incorrectly accepted by the early-out path.
+	constexpr uint32 LevelStateHashVersion = 2u;
 
 	template <typename TAssetClass>
 	TAssetClass* LoadOrCreateDataAsset(const FString& PackagePath, const FString& AssetName, bool& bOutCreated)
@@ -378,7 +381,8 @@ namespace EditorModuleLPTPrivate
 			return 0;
 		}
 
-		uint32 Hash = ComputeFilterSettingsHash(EffectiveFilterSettings);
+		uint32 Hash = GetTypeHash(LevelStateHashVersion);
+		Hash = HashCombineFast(Hash, ComputeFilterSettingsHash(EffectiveFilterSettings));
 		const bool bIsWorldPartition = SavedWorld->IsPartitionedWorld();
 
 		TArray<FString> ActorIdentifiers;
@@ -807,14 +811,30 @@ namespace EditorModuleLPTPrivate
 				continue;
 			}
 
-			CollectionAsset->Modify();
-			ApplyCollectionPresetToAsset(Preset, CollectionAsset);
-			DeduplicateCollectionAssetData(CollectionAsset);
-			CollectionAsset->MarkPackageDirty();
-			CollectionAsset->GetOutermost()->MarkPackageDirty();
-			if (!SaveAssetObject(CollectionAsset))
+			const FName DesiredCollectionKey = PresetCollectionKey;
+			const bool bPresetChanged = CollectionAsset->CollectionKey != DesiredCollectionKey ||
+				CollectionAsset->bAutoGenerate != Preset.bAutoGenerate ||
+				CollectionAsset->GroupTags != Preset.GroupTags ||
+				CollectionAsset->TargetDataLayers != Preset.TargetDataLayers ||
+				CollectionAsset->TargetDataLayerNames != Preset.TargetDataLayerNames ||
+				CollectionAsset->TargetCellRules != Preset.TargetCellRules;
+
+			if (bPresetChanged)
 			{
-				UE_LOG(LogLPTEditor, Warning, TEXT("Failed to save collection asset '%s' after applying preset."), *CollectionAsset->GetPathName());
+				CollectionAsset->Modify();
+				ApplyCollectionPresetToAsset(Preset, CollectionAsset);
+			}
+
+			const bool bCollectionDataChanged = DeduplicateCollectionAssetData(CollectionAsset);
+			if (bPresetChanged || bCollectionDataChanged)
+			{
+				bEntryModified = true;
+				CollectionAsset->MarkPackageDirty();
+				CollectionAsset->GetOutermost()->MarkPackageDirty();
+				if (!SaveAssetObject(CollectionAsset))
+				{
+					UE_LOG(LogLPTEditor, Warning, TEXT("Failed to save collection asset '%s' after applying preset."), *CollectionAsset->GetPathName());
+				}
 			}
 
 			const FSoftObjectPath CollectionPath(CollectionAsset->GetPathName());

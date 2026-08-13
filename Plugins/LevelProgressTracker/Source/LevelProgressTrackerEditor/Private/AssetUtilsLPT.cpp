@@ -12,6 +12,15 @@ namespace AssetUtilsLPT
 		return LongPackageName.StartsWith(TEXT("/Engine/")) || LongPackageName.StartsWith(TEXT("/Script/"));
 	}
 
+	bool IsWorldPartitionExternalPackage(const FString& LongPackageName)
+	{
+		FString NormalizedPackageName = LongPackageName;
+		NormalizedPackageName.ReplaceInline(TEXT("\\"), TEXT("/"));
+
+		return NormalizedPackageName.Contains(TEXT("/__ExternalActors__/")) ||
+			NormalizedPackageName.Contains(TEXT("/__ExternalObjects__/"));
+	}
+
 	FString NormalizeFolderRuleForMerge(const FString& InFolderPath)
 	{
 		FString FolderPath = InFolderPath;

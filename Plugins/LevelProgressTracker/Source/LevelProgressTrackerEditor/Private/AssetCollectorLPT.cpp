@@ -60,8 +60,12 @@ namespace AssetCollectorLPT
 		)
 		{
 			const FString PackageLongPath = PackageName.ToString();
-			if (AssetUtilsLPT::IsEngineOrScriptPackage(PackageLongPath))
+			if (AssetUtilsLPT::IsEngineOrScriptPackage(PackageLongPath) ||
+				AssetUtilsLPT::IsWorldPartitionExternalPackage(PackageLongPath))
 			{
+				// World Partition External Actor/Object packages are traversal roots,
+				// not preload content assets. Their dependencies are still traversed
+				// by AppendHardDependencyClosureAssets().
 				return;
 			}
 
@@ -200,7 +204,10 @@ namespace AssetCollectorLPT
 				}
 
 				const FString AssetLongPackageName = AssetPath.GetLongPackageName();
-				if (AssetLongPackageName.IsEmpty() || AssetUtilsLPT::IsEngineOrScriptPackage(AssetLongPackageName) || UniquePaths.Contains(AssetPath))
+				if (AssetLongPackageName.IsEmpty() ||
+					AssetUtilsLPT::IsEngineOrScriptPackage(AssetLongPackageName) ||
+					AssetUtilsLPT::IsWorldPartitionExternalPackage(AssetLongPackageName) ||
+					UniquePaths.Contains(AssetPath))
 				{
 					continue;
 				}

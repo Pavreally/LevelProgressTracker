@@ -32,6 +32,7 @@ private:
 	ULevelPreloadDatabaseLPT* GetOrCreateDatabaseAsset(const ULevelProgressTrackerSettings* Settings) const;
 	bool SaveDatabaseAsset(ULevelPreloadDatabaseLPT* DatabaseAsset) const;
 
+	bool bIsGenerating = false;
 	TSharedPtr<FSlateStyleSet> StyleSet;
 #endif
 };
