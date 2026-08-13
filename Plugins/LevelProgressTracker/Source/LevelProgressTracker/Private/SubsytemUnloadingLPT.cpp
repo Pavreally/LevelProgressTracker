@@ -72,7 +72,7 @@ void ULevelProgressTrackerSubsytem::UnloadLevelInstanceLPT(const TSoftObjectPtr<
 	}
 }
 
-void ULevelProgressTrackerSubsytem::UnloadLevelInstanceWithLPT(AActor* LevelInstanceActor)
+void ULevelProgressTrackerSubsytem::UnloadExistingLevelInstanceLPT(AActor* LevelInstanceActor)
 {
 	if (!IsValid(LevelInstanceActor))
 	{
