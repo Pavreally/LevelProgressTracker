@@ -221,20 +221,20 @@ public:
 	 * @param LoadOptions Optional collection-selection options. Empty options use collection key "Default".
 	 */
 	UFUNCTION(BlueprintCallable, Category = "LPT Subsystem", meta = (AutoCreateRefTerm = "LoadOptions"))
-	void LoadLevelInstanceWithLPT(
+	void LoadExistingLevelInstanceLPT(
 		AActor* LevelInstanceActor,
 		bool PreloadingResources,
 		const FLPTLoadOptions& LoadOptions
 	);
 
-	void LoadLevelInstanceWithLPT(
+	void LoadExistingLevelInstanceLPT(
 		AActor* LevelInstanceActor,
 		bool PreloadingResources = true
 	);
 
 	/** Stops an opt-in LPT load and forwards the unload request to the existing Level Instance actor. */
 	UFUNCTION(BlueprintCallable, Category = "LPT Subsystem")
-	void UnloadLevelInstanceWithLPT(AActor* LevelInstanceActor);
+	void UnloadExistingLevelInstanceLPT(AActor* LevelInstanceActor);
 
 	/**
 	 * Unloads the streaming level and breaks the reference to cached resources in memory, 

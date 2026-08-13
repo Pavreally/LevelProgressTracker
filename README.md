@@ -13,7 +13,7 @@ LPT is a plugin for Unreal Engine 5 that allows you to quickly and easily create
 
 `Version 1.4.2`
 - Built for Unreal Engine 5.7.4.
-- Added functions: `LoadLevelInstanceWithLPT(AActor* LevelInstanceActor, ...)` and `UnloadLevelInstanceWithLPT(AActor* LevelInstanceActor)`
+- Added functions: `LoadExistingLevelInstanceLPT(AActor* LevelInstanceActor, ...)` and `UnloadExistingLevelInstanceLPT(AActor* LevelInstanceActor)`
 	- FLevelStreamingDelegates Subscription: LPT subscribes to public `FLevelStreamingDelegates`.
 	- Immediate Instance Detection: `ULevelStreamingLevelInstance` is detected immediately upon calling `UWorld::AddStreamingLevel()`.
 	- Automatic Preload Trigger: Preloading from the LPT database is triggered as soon as a Level Instance is detected.
@@ -27,7 +27,7 @@ LPT is a plugin for Unreal Engine 5 that allows you to quickly and easily create
 		- Handles cases gracefully if the Level Instance is already loaded or detected by the automatic observer.
 		- Cancels preload if an unload is pending.
 	-	Usage Example:
-		- `LPTSubsystem->LoadLevelInstanceWithLPT(LevelInstanceActor, true);`
+		- `LPTSubsystem->LoadExistingLevelInstanceLPT(LevelInstanceActor, true);`
 		- Note for Blueprint: The function is exposed in the LPT Subsystem category.
 - Bug Fixes & Improvements:
 	- Crash on Exit: Fixed a crash occurring after exiting the application when using a World Partition level in Lyra Starter Game projects.

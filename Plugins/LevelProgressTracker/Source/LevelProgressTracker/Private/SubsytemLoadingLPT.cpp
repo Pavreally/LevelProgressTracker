@@ -125,12 +125,12 @@ void ULevelProgressTrackerSubsytem::LoadLevelInstanceLPT(TSoftObjectPtr<UWorld> 
 	LoadLevelInstanceLPT(LevelSoftPtr, Transform, OptionalLevelStreamingClass, bLoadAsTempPackage, PreloadingResources, FLPTLoadOptions());
 }
 
-void ULevelProgressTrackerSubsytem::LoadLevelInstanceWithLPT(AActor* LevelInstanceActor, bool PreloadingResources)
+void ULevelProgressTrackerSubsytem::LoadExistingLevelInstanceLPT(AActor* LevelInstanceActor, bool PreloadingResources)
 {
-	LoadLevelInstanceWithLPT(LevelInstanceActor, PreloadingResources, FLPTLoadOptions());
+	LoadExistingLevelInstanceLPT(LevelInstanceActor, PreloadingResources, FLPTLoadOptions());
 }
 
-void ULevelProgressTrackerSubsytem::LoadLevelInstanceWithLPT(AActor* LevelInstanceActor, bool PreloadingResources, const FLPTLoadOptions& LoadOptions)
+void ULevelProgressTrackerSubsytem::LoadExistingLevelInstanceLPT(AActor* LevelInstanceActor, bool PreloadingResources, const FLPTLoadOptions& LoadOptions)
 {
 	PreloadExistingLevelInstanceLPT(LevelInstanceActor, PreloadingResources, LoadOptions);
 }
@@ -139,14 +139,14 @@ void ULevelProgressTrackerSubsytem::PreloadExistingLevelInstanceLPT(AActor* Leve
 {
 	if (bIsDeinitializing || !IsValid(LevelInstanceActor))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("LPT (LoadLevelInstanceWithLPT): Invalid Level Instance actor."));
+		UE_LOG(LogTemp, Warning, TEXT("LPT (LoadExistingLevelInstanceLPT): Invalid Level Instance actor."));
 		return;
 	}
 
 	ILevelInstanceInterface* LevelInstance = Cast<ILevelInstanceInterface>(LevelInstanceActor);
 	if (!LevelInstance || !LevelInstance->IsWorldAssetValid())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("LPT (LoadLevelInstanceWithLPT): Actor '%s' does not implement ILevelInstanceInterface or has no valid World Asset."),
+		UE_LOG(LogTemp, Warning, TEXT("LPT (LoadExistingLevelInstanceLPT): Actor '%s' does not implement ILevelInstanceInterface or has no valid World Asset."),
 			*LevelInstanceActor->GetPathName());
 		return;
 	}
@@ -154,7 +154,7 @@ void ULevelProgressTrackerSubsytem::PreloadExistingLevelInstanceLPT(AActor* Leve
 	const FName StateKey = FName(*LevelInstanceActor->GetPathName());
 	if (LevelLoadedMap.Contains(StateKey))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("LPT (LoadLevelInstanceWithLPT): Level Instance '%s' is already loading or tracked."),
+		UE_LOG(LogTemp, Warning, TEXT("LPT (LoadExistingLevelInstanceLPT): Level Instance '%s' is already loading or tracked."),
 			*LevelInstanceActor->GetPathName());
 		return;
 	}
@@ -167,7 +167,7 @@ void ULevelProgressTrackerSubsytem::PreloadExistingLevelInstanceLPT(AActor* Leve
 				(Level.Value->ExistingLevelInstanceActor.Get() == LevelInstanceActor ||
 					Level.Value->LevelInstanceState.LevelReference.Get() == ExistingStreamingLevel))
 			{
-				UE_LOG(LogTemp, Warning, TEXT("LPT (LoadLevelInstanceWithLPT): Level Instance '%s' is already tracked."),
+				UE_LOG(LogTemp, Warning, TEXT("LPT (LoadExistingLevelInstanceLPT): Level Instance '%s' is already tracked."),
 					*LevelInstanceActor->GetPathName());
 				return;
 			}
