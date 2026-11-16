@@ -2,6 +2,7 @@
 
 #include "SubsytemLPT.h"
 #include "Engine/Level.h"
+#include "Engine/LevelStreaming.h"
 #include "Engine/StreamableManager.h"
 #include "GameFramework/Actor.h"
 #include "LevelInstance/LevelInstanceInterface.h"
@@ -57,13 +58,40 @@ void ULevelProgressTrackerSubsytem::OnLevelStreamingStateChanged(
 		return;
 	}
 
+	const bool bStreamingLevelFailedOrRemoved =
+		NewState == ELevelStreamingState::Removed ||
+		NewState == ELevelStreamingState::FailedToLoad;
+	const bool bStreamingLevelUnloaded =
+		NewState == ELevelStreamingState::Unloaded &&
+		!const_cast<ULevelStreaming*>(StreamingLevel)->ShouldBeLoaded();
+	if (bStreamingLevelFailedOrRemoved || bStreamingLevelUnloaded)
+	{
+		for (auto It = LevelLoadedMap.CreateIterator(); It; ++It)
+		{
+			TSharedPtr<FLevelState> LevelState = It.Value();
+			if (!LevelState.IsValid() || !LevelState->bLoadExistingSublevel ||
+				LevelState->GetStreamingLevelReference() != StreamingLevel)
+			{
+				continue;
+			}
+
+			const_cast<ULevelStreaming*>(StreamingLevel)->OnLevelShown.RemoveDynamic(
+				this,
+				&ULevelProgressTrackerSubsytem::OnLevelShown
+			);
+			ReleaseLevelStateHandles(LevelState.ToSharedRef(), true);
+			It.RemoveCurrent();
+			return;
+		}
+	}
+
 	ULevelStreamingLevelInstance* LevelInstanceStreaming = Cast<ULevelStreamingLevelInstance>(const_cast<ULevelStreaming*>(StreamingLevel));
 	if (!LevelInstanceStreaming)
 	{
 		return;
 	}
 
-	if (NewState == ELevelStreamingState::Removed || NewState == ELevelStreamingState::FailedToLoad)
+	if (bStreamingLevelFailedOrRemoved || bStreamingLevelUnloaded)
 	{
 		RemoveExternalLevelInstance(LevelInstanceStreaming);
 	}
@@ -105,7 +133,7 @@ void ULevelProgressTrackerSubsytem::TrackExternalLevelInstance(ULevelStreamingLe
 	{
 		ExistingState->LevelInstanceState.LevelReference = StreamingLevel;
 		ExistingState->bExternallyManaged = true;
-		ExistingState->bLoadExistingLevelInstance = false;
+		ExistingState->bLoadPlacedLevelInstance = false;
 
 		StreamingLevel->OnLevelShown.AddDynamic(
 			this,
@@ -175,7 +203,7 @@ void ULevelProgressTrackerSubsytem::RemoveExternalLevelInstance(ULevelStreamingL
 	{
 		for (const TPair<FName, TSharedPtr<FLevelState>>& Level : LevelLoadedMap)
 		{
-			if (Level.Value.IsValid() && Level.Value->LevelInstanceState.LevelReference.Get() == StreamingLevel)
+			if (Level.Value.IsValid() && Level.Value->GetStreamingLevelReference() == StreamingLevel)
 			{
 				MatchedStateKey = Level.Key;
 				LevelState = Level.Value;
@@ -307,7 +335,7 @@ void ULevelProgressTrackerSubsytem::OnLevelShown()
 		const FName& PackageName = Level.Key;
 		TSharedPtr<FLevelState>& LevelState = Level.Value;
 
-		ULevelStreamingDynamic* StreamingLevel = LevelState.IsValid() ? LevelState->LevelInstanceState.LevelReference.Get() : nullptr;
+		ULevelStreaming* StreamingLevel = LevelState.IsValid() ? LevelState->GetStreamingLevelReference() : nullptr;
 		if (LevelState.IsValid() &&
 				LevelState->LoadMethod == ELevelLoadMethod::LevelStreaming &&
 				!LevelState->LevelInstanceState.IsLoaded &&
@@ -330,7 +358,7 @@ void ULevelProgressTrackerSubsytem::OnLevelShown()
 			continue;
 		}
 
-		ULevelStreamingDynamic* StreamingLevel = LevelState->LevelInstanceState.LevelReference.Get();
+		ULevelStreaming* StreamingLevel = LevelState->GetStreamingLevelReference();
 		if (!IsValid(StreamingLevel))
 		{
 			continue;

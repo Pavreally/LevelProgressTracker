@@ -35,9 +35,12 @@
 struct FStreamableHandle;
 class SWidgetWrapLPT;
 class ULevelPreloadDatabaseLPT;
+class UAssetCollectionDataLPT;
 class AActor;
+class UWorld;
 class ULevelStreaming;
 class ULevelStreamingLevelInstance;
+struct FLevelPreloadEntryLPT;
 
 enum class ELevelStreamingState : uint8;
 enum class ELevelStreamingTargetState : uint8;
@@ -128,14 +131,25 @@ public:
 	UPROPERTY()
 	FLevelInstanceState LevelInstanceState;
 
+	// Existing streaming sublevel selected from the current parent world's collection data.
+	TWeakObjectPtr<ULevelStreaming> ExistingSublevelStreaming;
+	bool bLoadExistingSublevel = false;
+
+	ULevelStreaming* GetStreamingLevelReference() const
+	{
+		return ExistingSublevelStreaming.IsValid()
+			? ExistingSublevelStreaming.Get()
+			: LevelInstanceState.LevelReference.Get();
+	}
+
 	// Runtime collection-selection options used to resolve preload assets from collection data assets.
 	FLPTLoadOptions LoadOptions;
 
 	// True when this state was discovered from an existing UE Level Instance rather than created by LPT.
 	bool bExternallyManaged = false;
 
-	// True for the opt-in API while the engine's Level Instance request is pending.
-	bool bLoadExistingLevelInstance = false;
+	// True for the opt-in API while the engine's placed Level Instance request is pending.
+	bool bLoadPlacedLevelInstance = false;
 	TWeakObjectPtr<AActor> ExistingLevelInstanceActor;
 
 	// External Level Instances can become visible before their optional LPT preload completes.
@@ -212,29 +226,30 @@ public:
 		bool PreloadingResources = true
 	);
 
-	/**
-	 * Preloads resources and then requests loading of an existing Unreal Level Instance actor.
-	 * The actor remains an ordinary ALevelInstance; LPT does not replace or subclass it.
-	 * The actor must implement ILevelInstanceInterface.
-	 * @param LevelInstanceActor Existing Level Instance actor to load through the engine's normal subsystem.
-	 * @param PreloadingResources Before requesting the Level Instance load, its resources are automatically loaded.
-	 * @param LoadOptions Optional collection-selection options. Empty options use collection key "Default".
-	 */
+	/** Preloads and activates a streaming sublevel configured in the current parent level's LPT collection preset. */
+	UFUNCTION(BlueprintCallable, Category = "LPT Subsystem")
+	void LoadSubLevelLPT(FName CollectionKey, bool PreloadingResources = true);
+
+	/** Preloads and requests loading of an existing Unreal Level Instance actor. */
 	UFUNCTION(BlueprintCallable, Category = "LPT Subsystem", meta = (AutoCreateRefTerm = "LoadOptions"))
-	void LoadExistingLevelInstanceLPT(
+	void LoadPlacedLevelInstanceLPT(
 		AActor* LevelInstanceActor,
 		bool PreloadingResources,
 		const FLPTLoadOptions& LoadOptions
 	);
 
-	void LoadExistingLevelInstanceLPT(
+	void LoadPlacedLevelInstanceLPT(
 		AActor* LevelInstanceActor,
 		bool PreloadingResources = true
 	);
 
-	/** Stops an opt-in LPT load and forwards the unload request to the existing Level Instance actor. */
+	/** Unloads the sublevel selected by a collection key in the current parent level. */
 	UFUNCTION(BlueprintCallable, Category = "LPT Subsystem")
-	void UnloadExistingLevelInstanceLPT(AActor* LevelInstanceActor);
+	void UnloadSubLevelLPT(FName CollectionKey);
+
+	/** Stops an LPT load and forwards the unload request to the existing Level Instance actor. */
+	UFUNCTION(BlueprintCallable, Category = "LPT Subsystem")
+	void UnloadPlacedLevelInstanceLPT(AActor* LevelInstanceActor);
 
 	/**
 	 * Unloads the streaming level and breaks the reference to cached resources in memory, 
@@ -323,7 +338,15 @@ private:
 
 	void TrackExternalLevelInstance(ULevelStreamingLevelInstance* StreamingLevel);
 	void RemoveExternalLevelInstance(ULevelStreamingLevelInstance* StreamingLevel);
-	void PreloadExistingLevelInstanceLPT(AActor* LevelInstanceActor, bool PreloadingResources, const FLPTLoadOptions& LoadOptions);
+	void PreloadPlacedLevelInstanceLPT(AActor* LevelInstanceActor, bool PreloadingResources, const FLPTLoadOptions& LoadOptions);
+	bool ResolveSublevelCollection(
+		UWorld* ParentWorld,
+		ULevelPreloadDatabaseLPT* PreloadDatabase,
+		FName CollectionKey,
+		const TCHAR* OperationName,
+		const FLevelPreloadEntryLPT*& OutParentEntry,
+		UAssetCollectionDataLPT*& OutCollection,
+		ULevelStreaming*& OutStreamingLevel) const;
 
 	FName GetLevelStateKey(const ULevelStreaming* StreamingLevel) const;
 
@@ -348,6 +371,8 @@ private:
 	 */
 	void StartPreloadingResources(FName PackagePath, const TSoftObjectPtr<UWorld>& LevelSoftPtr, TSharedRef<FLevelState>& LevelState, bool bIsStreamingLevel, const FLPTLoadOptions& LoadOptions);
 
+	void StartPreloadingPaths(FName PackagePath, bool bIsStreamingLevel, TSharedRef<FLevelState> LevelState, TArray<FSoftObjectPath> Paths);
+
 	// Starts loading the next chunk for chunked preload mode.
 	void StartNextPreloadChunk(FName PackagePath, bool bIsStreamingLevel, TSharedRef<FLevelState> LevelState);
 
@@ -361,4 +386,3 @@ private:
 	// Set while the subsystem is being torn down. No new streaming requests are valid in this phase.
 	bool bIsDeinitializing = false;
 };
-

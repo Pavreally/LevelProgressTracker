@@ -6,14 +6,32 @@
 #include "AssetFilterSettingsLPT.h"
 #include "Engine/StreamableManager.h"
 #include "Engine/AssetManager.h"
+#include "Engine/LevelStreaming.h"
+#include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
 #include "GameFramework/Actor.h"
 #include "LevelInstance/LevelInstanceInterface.h"
 #include "LevelInstance/LevelInstanceLevelStreaming.h"
+#include "Misc/PackageName.h"
+#include "UObject/Package.h"
 
 namespace
 {
 	const FName DefaultCollectionKey(TEXT("Default"));
+
+	FSoftObjectPath MakeWorldAssetPath(const UWorld* World)
+	{
+		if (!World || !World->GetOutermost())
+		{
+			return FSoftObjectPath();
+		}
+
+		const FString WorldPackageName = UWorld::RemovePIEPrefix(World->GetOutermost()->GetName());
+		const FString WorldAssetName = FPackageName::GetLongPackageAssetName(WorldPackageName);
+		return WorldPackageName.IsEmpty() || WorldAssetName.IsEmpty()
+			? FSoftObjectPath()
+			: FSoftObjectPath(FString::Printf(TEXT("%s.%s"), *WorldPackageName, *WorldAssetName));
+	}
 
 	void SelectCollectionsForLoad(
 		const FLevelPreloadEntryLPT& LevelEntry,
@@ -102,6 +120,158 @@ namespace
 	}
 }
 
+bool ULevelProgressTrackerSubsytem::ResolveSublevelCollection(
+	UWorld* ParentWorld,
+	ULevelPreloadDatabaseLPT* PreloadDatabase,
+	FName CollectionKey,
+	const TCHAR* OperationName,
+	const FLevelPreloadEntryLPT*& OutParentEntry,
+	UAssetCollectionDataLPT*& OutCollection,
+	ULevelStreaming*& OutStreamingLevel) const
+{
+	OutParentEntry = nullptr;
+	OutCollection = nullptr;
+	OutStreamingLevel = nullptr;
+
+	if (CollectionKey.IsNone())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("LPT (%s): Collection key is empty."), OperationName);
+		return false;
+	}
+
+	if (!IsValid(ParentWorld))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("LPT (%s): There is no valid current parent world."), OperationName);
+		return false;
+	}
+
+	if (!IsValid(PreloadDatabase))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("LPT (%s): Preload database is not available."), OperationName);
+		return false;
+	}
+
+	const FSoftObjectPath ParentWorldPath = MakeWorldAssetPath(ParentWorld);
+	if (!ParentWorldPath.IsValid())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("LPT (%s): Could not resolve the current parent world's asset path."), OperationName);
+		return false;
+	}
+
+	const FString ParentPackageName = ParentWorldPath.GetLongPackageName();
+	const FLevelPreloadEntryLPT* MatchedParentEntry = nullptr;
+	for (const FLevelPreloadEntryLPT& Entry : PreloadDatabase->Levels)
+	{
+		const FSoftObjectPath EntryPath = Entry.Level.ToSoftObjectPath();
+		if (!EntryPath.IsValid() || UWorld::RemovePIEPrefix(EntryPath.GetLongPackageName()) != ParentPackageName)
+		{
+			continue;
+		}
+
+		if (MatchedParentEntry)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("LPT (%s): The preload database has multiple entries for parent level '%s'."),
+				OperationName, *ParentPackageName);
+			return false;
+		}
+
+		MatchedParentEntry = &Entry;
+	}
+
+	if (!MatchedParentEntry)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("LPT (%s): No preload data was found for parent level '%s'."),
+			OperationName, *ParentPackageName);
+		return false;
+	}
+
+	UAssetCollectionDataLPT* MatchedCollection = nullptr;
+	FSoftObjectPath MatchedCollectionPath;
+	for (const TSoftObjectPtr<UAssetCollectionDataLPT>& CollectionRef : MatchedParentEntry->Collections)
+	{
+		const FSoftObjectPath CollectionPath = CollectionRef.ToSoftObjectPath();
+		if (!CollectionPath.IsValid() || CollectionPath == MatchedCollectionPath)
+		{
+			continue;
+		}
+
+		UAssetCollectionDataLPT* Collection = CollectionRef.LoadSynchronous();
+		if (!Collection || Collection->CollectionKey != CollectionKey)
+		{
+			continue;
+		}
+
+		if (MatchedCollection)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("LPT (%s): Collection key '%s' is ambiguous in parent level '%s'."),
+				OperationName, *CollectionKey.ToString(), *ParentPackageName);
+			return false;
+		}
+
+		MatchedCollection = Collection;
+		MatchedCollectionPath = CollectionPath;
+	}
+
+	if (!MatchedCollection)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("LPT (%s): Collection key '%s' was not found for parent level '%s'."),
+			OperationName, *CollectionKey.ToString(), *ParentPackageName);
+		return false;
+	}
+
+	const FSoftObjectPath TargetSublevelPath = MatchedCollection->TargetSublevel.ToSoftObjectPath();
+	if (!TargetSublevelPath.IsValid())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("LPT (%s): Collection '%s' does not specify a target sublevel."),
+			OperationName, *CollectionKey.ToString());
+		return false;
+	}
+
+	const FString TargetPackageName = UWorld::RemovePIEPrefix(TargetSublevelPath.GetLongPackageName());
+	if (TargetPackageName.IsEmpty())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("LPT (%s): Collection '%s' has an invalid target sublevel path."),
+			OperationName, *CollectionKey.ToString());
+		return false;
+	}
+	ULevelStreaming* MatchedStreamingLevel = nullptr;
+	for (ULevelStreaming* StreamingLevel : ParentWorld->GetStreamingLevels())
+	{
+		if (!IsValid(StreamingLevel))
+		{
+			continue;
+		}
+
+		const FString StreamingPackageName = UWorld::RemovePIEPrefix(
+			StreamingLevel->GetWorldAsset().ToSoftObjectPath().GetLongPackageName());
+		if (StreamingPackageName != TargetPackageName)
+		{
+			continue;
+		}
+
+		if (MatchedStreamingLevel)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("LPT (%s): More than one streaming level matches target sublevel '%s'."),
+				OperationName, *TargetSublevelPath.ToString());
+			return false;
+		}
+
+		MatchedStreamingLevel = StreamingLevel;
+	}
+
+	if (!MatchedStreamingLevel)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("LPT (%s): Target sublevel '%s' is not present in the current parent world."),
+			OperationName, *TargetSublevelPath.ToString());
+		return false;
+	}
+
+	OutParentEntry = MatchedParentEntry;
+	OutCollection = MatchedCollection;
+	OutStreamingLevel = MatchedStreamingLevel;
+	return true;
+}
+
 void ULevelProgressTrackerSubsytem::OpenLevelLPT(const TSoftObjectPtr<UWorld> LevelSoftPtr, bool PreloadingResources)
 {
 	OpenLevelLPT(LevelSoftPtr, PreloadingResources, FLPTLoadOptions());
@@ -125,28 +295,85 @@ void ULevelProgressTrackerSubsytem::LoadLevelInstanceLPT(TSoftObjectPtr<UWorld> 
 	LoadLevelInstanceLPT(LevelSoftPtr, Transform, OptionalLevelStreamingClass, bLoadAsTempPackage, PreloadingResources, FLPTLoadOptions());
 }
 
-void ULevelProgressTrackerSubsytem::LoadExistingLevelInstanceLPT(AActor* LevelInstanceActor, bool PreloadingResources)
+void ULevelProgressTrackerSubsytem::LoadSubLevelLPT(FName CollectionKey, bool PreloadingResources)
 {
-	LoadExistingLevelInstanceLPT(LevelInstanceActor, PreloadingResources, FLPTLoadOptions());
+	UWorld* ParentWorld = GetWorld();
+	ULevelPreloadDatabaseLPT* PreloadDatabase = PreloadDatabaseAsset.LoadSynchronous();
+	const FLevelPreloadEntryLPT* ParentEntry = nullptr;
+	UAssetCollectionDataLPT* Collection = nullptr;
+	ULevelStreaming* StreamingLevel = nullptr;
+	if (!ResolveSublevelCollection(
+		ParentWorld,
+		PreloadDatabase,
+		CollectionKey,
+		TEXT("LoadSubLevelLPT"),
+		ParentEntry,
+		Collection,
+		StreamingLevel))
+	{
+		return;
+	}
+
+	const FName StateKey = GetLevelStateKey(StreamingLevel);
+	if (StateKey.IsNone() || LevelLoadedMap.Contains(StateKey))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("LPT (LoadSubLevelLPT): Sublevel for collection '%s' is already loading or tracked."), *CollectionKey.ToString());
+		return;
+	}
+
+	TSharedRef<FLevelState> LevelState = MakeShared<FLevelState>();
+	LevelState->LevelSoftPtr = Collection->TargetSublevel;
+	LevelState->LevelName = FName(Collection->TargetSublevel.ToSoftObjectPath().GetAssetName());
+	LevelState->LoadMethod = ELevelLoadMethod::LevelStreaming;
+	LevelState->ExistingSublevelStreaming = StreamingLevel;
+	LevelState->bLoadExistingSublevel = true;
+	LevelState->LoadOptions.CollectionKeys.Add(CollectionKey);
+
+	if (UAssetFilterSettingsLPT* FilterSettingsAsset = ParentEntry->FilterSettings.LoadSynchronous())
+	{
+		const FLPTFilterSettings RuntimeFilterSettings = FilterSettingsAsset->ToFilterSettings();
+		LevelState->bUseChunkedPreload = RuntimeFilterSettings.bUseChunkedPreload;
+		LevelState->PreloadChunkSize = FMath::Max(1, RuntimeFilterSettings.PreloadChunkSize);
+	}
+
+	LevelLoadedMap.Add(StateKey, LevelState);
+	if (PreloadingResources)
+	{
+		TArray<UAssetCollectionDataLPT*> SelectedCollections;
+		SelectedCollections.Add(Collection);
+		TArray<FSoftObjectPath> Paths;
+		MergeCollectionAssetLists(SelectedCollections, Paths);
+		StartPreloadingPaths(StateKey, true, LevelState, MoveTemp(Paths));
+	}
+	else
+	{
+		LevelState->bPreloadCompleted = true;
+		StartLevelLPT(StateKey, true, LevelState);
+	}
 }
 
-void ULevelProgressTrackerSubsytem::LoadExistingLevelInstanceLPT(AActor* LevelInstanceActor, bool PreloadingResources, const FLPTLoadOptions& LoadOptions)
+void ULevelProgressTrackerSubsytem::LoadPlacedLevelInstanceLPT(AActor* LevelInstanceActor, bool PreloadingResources)
 {
-	PreloadExistingLevelInstanceLPT(LevelInstanceActor, PreloadingResources, LoadOptions);
+	LoadPlacedLevelInstanceLPT(LevelInstanceActor, PreloadingResources, FLPTLoadOptions());
 }
 
-void ULevelProgressTrackerSubsytem::PreloadExistingLevelInstanceLPT(AActor* LevelInstanceActor, bool PreloadingResources, const FLPTLoadOptions& LoadOptions)
+void ULevelProgressTrackerSubsytem::LoadPlacedLevelInstanceLPT(AActor* LevelInstanceActor, bool PreloadingResources, const FLPTLoadOptions& LoadOptions)
+{
+	PreloadPlacedLevelInstanceLPT(LevelInstanceActor, PreloadingResources, LoadOptions);
+}
+
+void ULevelProgressTrackerSubsytem::PreloadPlacedLevelInstanceLPT(AActor* LevelInstanceActor, bool PreloadingResources, const FLPTLoadOptions& LoadOptions)
 {
 	if (bIsDeinitializing || !IsValid(LevelInstanceActor))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("LPT (LoadExistingLevelInstanceLPT): Invalid Level Instance actor."));
+		UE_LOG(LogTemp, Warning, TEXT("LPT (LoadPlacedLevelInstanceLPT): Invalid Level Instance actor."));
 		return;
 	}
 
 	ILevelInstanceInterface* LevelInstance = Cast<ILevelInstanceInterface>(LevelInstanceActor);
 	if (!LevelInstance || !LevelInstance->IsWorldAssetValid())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("LPT (LoadExistingLevelInstanceLPT): Actor '%s' does not implement ILevelInstanceInterface or has no valid World Asset."),
+		UE_LOG(LogTemp, Warning, TEXT("LPT (LoadPlacedLevelInstanceLPT): Actor '%s' does not implement ILevelInstanceInterface or has no valid World Asset."),
 			*LevelInstanceActor->GetPathName());
 		return;
 	}
@@ -154,7 +381,7 @@ void ULevelProgressTrackerSubsytem::PreloadExistingLevelInstanceLPT(AActor* Leve
 	const FName StateKey = FName(*LevelInstanceActor->GetPathName());
 	if (LevelLoadedMap.Contains(StateKey))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("LPT (LoadExistingLevelInstanceLPT): Level Instance '%s' is already loading or tracked."),
+		UE_LOG(LogTemp, Warning, TEXT("LPT (LoadPlacedLevelInstanceLPT): Level Instance '%s' is already loading or tracked."),
 			*LevelInstanceActor->GetPathName());
 		return;
 	}
@@ -167,7 +394,7 @@ void ULevelProgressTrackerSubsytem::PreloadExistingLevelInstanceLPT(AActor* Leve
 				(Level.Value->ExistingLevelInstanceActor.Get() == LevelInstanceActor ||
 					Level.Value->LevelInstanceState.LevelReference.Get() == ExistingStreamingLevel))
 			{
-				UE_LOG(LogTemp, Warning, TEXT("LPT (LoadExistingLevelInstanceLPT): Level Instance '%s' is already tracked."),
+				UE_LOG(LogTemp, Warning, TEXT("LPT (LoadPlacedLevelInstanceLPT): Level Instance '%s' is already tracked."),
 					*LevelInstanceActor->GetPathName());
 				return;
 			}
@@ -179,7 +406,7 @@ void ULevelProgressTrackerSubsytem::PreloadExistingLevelInstanceLPT(AActor* Leve
 	LevelState->LevelName = FName(LevelInstanceActor->GetName());
 	LevelState->LoadMethod = ELevelLoadMethod::LevelStreaming;
 	LevelState->bExternallyManaged = true;
-	LevelState->bLoadExistingLevelInstance = true;
+	LevelState->bLoadPlacedLevelInstance = true;
 	LevelState->ExistingLevelInstanceActor = LevelInstanceActor;
 	LevelState->LoadOptions = LoadOptions;
 
@@ -324,7 +551,15 @@ void ULevelProgressTrackerSubsytem::StartPreloadingResources(FName PackagePath, 
 		);
 	}
 
-	// Setup load stat
+	StartPreloadingPaths(PackagePath, bIsStreamingLevel, LevelState, MoveTemp(Paths));
+}
+
+void ULevelProgressTrackerSubsytem::StartPreloadingPaths(
+	FName PackagePath,
+	bool bIsStreamingLevel,
+	TSharedRef<FLevelState> LevelState,
+	TArray<FSoftObjectPath> Paths)
+{
 	LevelState->TotalAssets = Paths.Num();
 	LevelState->LoadedAssets = 0;
 	LevelState->PreloadPaths.Reset();
@@ -451,9 +686,16 @@ void ULevelProgressTrackerSubsytem::StartNextPreloadChunk(FName PackagePath, boo
 
 void ULevelProgressTrackerSubsytem::StartLevelLPT(FName PackagePath, bool bIsStreamingLevel, TSharedRef<FLevelState> LevelState)
 {
+	const TSharedPtr<FLevelState> CurrentState = LevelLoadedMap.FindRef(PackagePath);
+	if (!CurrentState.IsValid() || CurrentState.Get() != &LevelState.Get())
+	{
+		// An unload may cancel a preload while its completion callback is already queued.
+		return;
+	}
+
 	if (bIsStreamingLevel)
 	{
-		if (LevelState->bLoadExistingLevelInstance)
+		if (LevelState->bLoadPlacedLevelInstance)
 		{
 			AActor* LevelInstanceActor = LevelState->ExistingLevelInstanceActor.Get();
 			ILevelInstanceInterface* LevelInstance = IsValid(LevelInstanceActor)
@@ -474,6 +716,49 @@ void ULevelProgressTrackerSubsytem::StartLevelLPT(FName PackagePath, bool bIsStr
 			if (ULevelStreamingLevelInstance* StreamingLevel = LevelInstance->GetLevelStreaming())
 			{
 				TrackExternalLevelInstance(StreamingLevel);
+			}
+			return;
+		}
+
+		if (LevelState->bLoadExistingSublevel)
+		{
+			ULevelStreaming* StreamingLevel = LevelState->GetStreamingLevelReference();
+			if (!IsValid(StreamingLevel))
+			{
+				UE_LOG(LogTemp, Warning, TEXT("LPT (LoadSubLevelLPT): Streaming sublevel reference became invalid before activation."));
+				ReleaseLevelStateHandles(LevelState, true);
+				LevelLoadedMap.Remove(PackagePath);
+				return;
+			}
+
+			StreamingLevel->OnLevelShown.AddDynamic(
+				this,
+				&ULevelProgressTrackerSubsytem::OnLevelShown
+			);
+
+			if (ULevelStreamingLevelInstance* LevelInstanceStreaming = Cast<ULevelStreamingLevelInstance>(StreamingLevel))
+			{
+				ILevelInstanceInterface* LevelInstance = LevelInstanceStreaming->GetLevelInstance();
+				if (!LevelInstance)
+				{
+					UE_LOG(LogTemp, Warning, TEXT("LPT (LoadSubLevelLPT): Streaming sublevel is a Level Instance without an owning actor."));
+					StreamingLevel->OnLevelShown.RemoveDynamic(this, &ULevelProgressTrackerSubsytem::OnLevelShown);
+					ReleaseLevelStateHandles(LevelState, true);
+					LevelLoadedMap.Remove(PackagePath);
+					return;
+				}
+
+				LevelInstance->LoadLevelInstance();
+			}
+			else
+			{
+				StreamingLevel->SetShouldBeLoaded(true);
+				StreamingLevel->SetShouldBeVisible(true);
+			}
+
+			if (StreamingLevel->GetLevelStreamingState() == ELevelStreamingState::LoadedVisible)
+			{
+				OnLevelShown();
 			}
 			return;
 		}

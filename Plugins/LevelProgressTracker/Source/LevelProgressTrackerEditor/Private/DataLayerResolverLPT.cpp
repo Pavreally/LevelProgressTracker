@@ -170,7 +170,7 @@ namespace DataLayerResolverLPT
 				continue;
 			}
 
-			AddResolvedDataLayerName(DataLayerInstance->GetDataLayerFName());
+			AddResolvedDataLayerName(DataLayerInstance->GetFName());
 			AddResolvedDataLayerName(FName(*DataLayerInstance->GetDataLayerShortName()));
 		}
 
@@ -202,7 +202,7 @@ namespace DataLayerResolverLPT
 				continue;
 			}
 
-			AddResolvedDataLayerName(DataLayerInstance->GetDataLayerFName());
+			AddResolvedDataLayerName(DataLayerInstance->GetFName());
 			AddResolvedDataLayerName(FName(*DataLayerInstance->GetDataLayerShortName()));
 		}
 

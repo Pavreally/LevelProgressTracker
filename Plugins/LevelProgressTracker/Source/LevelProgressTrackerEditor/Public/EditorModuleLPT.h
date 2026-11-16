@@ -8,6 +8,7 @@
 class UPackage;
 class UWorld;
 class ULevelPreloadDatabaseLPT;
+class UAssetFilterSettingsLPT;
 class ULevelProgressTrackerSettings;
 class FObjectPostSaveContext;
 class FSlateStyleSet;
@@ -23,14 +24,15 @@ private:
 	void RegisterStyle();
 	void UnregisterStyle();
 	void OnPackageSaved(const FString& PackageFilename, UPackage* SavedPackage, FObjectPostSaveContext SaveContext);
-	void RebuildLevelDependencies(UWorld* SavedWorld);
+	bool RebuildLevelDependencies(UWorld* SavedWorld, bool bForceGeneration = false);
 	void RegisterMenus();
 	void HandleToolbarOpenLevelRulesClicked();
 	void HandleOpenLevelRulesEditorRequested(ULevelProgressTrackerSettings* Settings);
 	bool TryGetCurrentEditorLevel(TSoftObjectPtr<UWorld>& OutLevelSoftPtr, FString& OutLevelPackagePath, FString& OutLevelDisplayName, bool& bIsWorldPartition) const;
-	void OpenLevelRulesWindow(ULevelPreloadDatabaseLPT* DatabaseAsset, const TSoftObjectPtr<UWorld>& LevelSoftPtr, const FString& LevelDisplayName, bool bIsWorldPartition);
+	void OpenLevelRulesWindow(ULevelPreloadDatabaseLPT* DatabaseAsset, UAssetFilterSettingsLPT* FilterSettingsAsset, const TSoftObjectPtr<UWorld>& LevelSoftPtr, const FString& LevelDisplayName, bool bIsWorldPartition, bool bHasSublevels);
 	ULevelPreloadDatabaseLPT* GetOrCreateDatabaseAsset(const ULevelProgressTrackerSettings* Settings) const;
 	bool SaveDatabaseAsset(ULevelPreloadDatabaseLPT* DatabaseAsset) const;
+	bool AddAllWorldPartitionDataLayersToPresets(UWorld* EditorWorld, UAssetFilterSettingsLPT* FilterSettingsAsset) const;
 
 	bool bIsGenerating = false;
 	TSharedPtr<FSlateStyleSet> StyleSet;

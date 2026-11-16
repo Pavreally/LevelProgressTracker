@@ -10,6 +10,7 @@
 #include "AssetFilterSettingsLPT.generated.h"
 
 class UDataLayerAsset;
+class UWorld;
 
 USTRUCT(BlueprintType)
 struct FLPTCollectionPresetLPT
@@ -34,6 +35,12 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Collection Presets", meta = (DisplayName = "Cell Rules"))
 	TArray<FString> TargetCellRules;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Collection Presets", meta = (DisplayName = "Sublevel"))
+	TSoftObjectPtr<UWorld> TargetSublevel;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Collection Presets", meta = (DisplayName = "Generated Resource Reference Count", ToolTip = "Number of soft object references currently saved for this collection preset."))
+	int32 GeneratedAssetCount = 0;
 };
 
 UCLASS(BlueprintType)
@@ -65,6 +72,9 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Partition", meta = (ToolTip = "If true and no Data Layer/Cell scope is set in Collection Presets, generation may scan the full World Partition level. Disabled by default to avoid heavy generation on large maps."))
 	bool bAllowWorldPartitionUnscopedAutoScan = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Collection Presets", meta = (ToolTip = "Automatically add a collection preset for each sublevel when LPT settings are saved or generated. Applies only to levels that contain streaming sublevels."))
+	bool bAutoCreateSublevelCollections = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Collection Presets", meta = (ToolTip = "Optional collection presets that can be materialized into AssetCollectionDataLPT assets."))
 	TArray<FLPTCollectionPresetLPT> CollectionPresets;

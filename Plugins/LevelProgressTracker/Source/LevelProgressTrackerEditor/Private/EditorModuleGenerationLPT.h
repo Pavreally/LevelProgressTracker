@@ -23,7 +23,7 @@ namespace EditorModuleLPTPrivate
 	uint32 ComputeCollectionContentHash(const UAssetCollectionDataLPT* CollectionAsset, const FLPTFilterSettings& EffectiveFilterSettings);
 	uint32 ComputeLevelStateHash(UWorld* SavedWorld, const FLPTFilterSettings& EffectiveFilterSettings);
 
-	UAssetCollectionDataLPT* GetOrCreateCollectionAsset(const ULevelProgressTrackerSettings* Settings, const FString& LevelAssetName, FName CollectionKey);
+	UAssetCollectionDataLPT* GetOrCreateCollectionAsset(const ULevelProgressTrackerSettings* Settings, const FString& LevelAssetName, FName CollectionKey, const FSoftObjectPath& TargetSublevelPath = FSoftObjectPath());
 	UAssetFilterSettingsLPT* GetOrCreateFilterSettingsAsset(const ULevelProgressTrackerSettings* Settings, const FString& LevelAssetName);
 	bool SaveAssetObject(UObject* AssetObject);
 
@@ -36,5 +36,11 @@ namespace EditorModuleLPTPrivate
 	bool ResolveCollectionTargetDataLayerAssetsFromNames(UWorld* SavedWorld, UAssetCollectionDataLPT* CollectionAsset);
 
 	FLPTFilterSettings BuildCollectionEffectiveRules(const FLPTFilterSettings& BaseRules, const UAssetCollectionDataLPT* CollectionAsset, bool bIsWorldPartition);
-	TArray<FSoftObjectPath> BuildFilteredAssetsForRules(UWorld* SavedWorld, IAssetRegistry& Registry, const FLPTFilterSettings& EffectiveRules);
+	TArray<FSoftObjectPath> BuildFilteredAssetsForRules(
+		UWorld* SavedWorld,
+		IAssetRegistry& Registry,
+		const FLPTFilterSettings& EffectiveRules,
+		const FSoftObjectPath& TargetSublevelPath,
+		bool& bOutTargetLevelResolved
+	);
 }

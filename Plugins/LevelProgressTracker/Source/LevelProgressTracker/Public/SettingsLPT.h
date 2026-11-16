@@ -154,8 +154,8 @@ public:
 	UPROPERTY(EditAnywhere, Config, Category = "Database", meta = (ToolTip = "Folder for AssetFilterSettingsLPT assets. If empty, defaults to '<Database Folder>/AssetFilterSettings'.", ContentDir, LongPackageName, ForceShowPluginContent))
 	FDirectoryPath AssetFilterSettingsFolder;
 
-	/* Enables automatic database generation when a level package is saved. */
-	UPROPERTY(EditAnywhere, Config, Category = "Generation")
+	/* Generates LPT data automatically when a level is saved. When disabled, use Save Level Data in the LPT Rules window. */
+	UPROPERTY(EditAnywhere, Config, Category = "Generation", meta = (DisplayName = "Auto Generate on Level Save", ToolTip = "When disabled, LPT data is generated only when Save Level Data is pressed in the LPT Rules window."))
 	bool bAutoGenerateOnLevelSave = true;
 
 	/* Default class-category filter used when creating new AssetFilterSettingsLPT assets. */

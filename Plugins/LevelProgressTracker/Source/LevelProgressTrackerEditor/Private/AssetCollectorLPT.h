@@ -6,6 +6,7 @@
 #include "SettingsLPT.h"
 
 class IAssetRegistry;
+class ULevel;
 class UWorld;
 
 namespace AssetCollectorLPT
@@ -22,7 +23,9 @@ namespace AssetCollectorLPT
 		const TArray<FName>& RootPackageNames,
 		TSet<FSoftObjectPath>& UniquePaths,
 		TArray<FSoftObjectPath>& OutAssets,
-		const FLPTFilterSettings* Rules = nullptr
+		const FLPTFilterSettings* Rules = nullptr,
+		const TSet<FName>* ExcludedPackageNames = nullptr,
+		bool bStopAtNestedWorldPackages = false
 	);
 
 	void AppendExplicitAssetRuleCandidates(
@@ -31,6 +34,12 @@ namespace AssetCollectorLPT
 		TArray<FSoftObjectPath>& OutAssets
 	);
 
+	void CollectLevelReferencedPackages(
+		ULevel* Level,
+		const TSet<FName>& ExcludedLevelPackageNames,
+		TSet<FName>& OutReferencedPackageNames,
+		int32& OutActorCount
+	);
+
 	void CollectWorldPartitionActorPackages(UWorld* World, const FLPTFilterSettings& Rules, TSet<FName>& InOutCandidateActorPackages);
 }
-

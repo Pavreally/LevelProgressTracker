@@ -10,8 +10,14 @@
 
 #include "AssetRegistry/AssetData.h"
 #include "AssetRegistry/IAssetRegistry.h"
+#include "Components/ActorComponent.h"
+#include "Engine/Level.h"
+#include "Engine/LevelScriptActor.h"
 #include "Engine/World.h"
+#include "GameFramework/Actor.h"
+#include "GameFramework/WorldSettings.h"
 #include "Misc/PackageName.h"
+#include "UObject/UObjectGlobals.h"
 #include "WorldPartition/WorldPartition.h"
 #include "WorldPartition/WorldPartitionActorDescInstance.h"
 #include "WorldPartition/WorldPartitionHelpers.h"
@@ -29,6 +35,64 @@ namespace AssetCollectorLPT
 				ClassFilter.bIncludeSounds &&
 				ClassFilter.bIncludeWidgets &&
 				ClassFilter.bIncludeDataAssets;
+		}
+
+		void AddReferencedObjectPackage(
+			const UObject* ReferencedObject,
+			const TSet<FName>& ExcludedLevelPackageNames,
+			TSet<FName>& OutReferencedPackageNames
+		)
+		{
+			if (!IsValid(ReferencedObject))
+			{
+				return;
+			}
+
+			const UPackage* Package = ReferencedObject->GetOutermost();
+			if (!Package)
+			{
+				return;
+			}
+
+			const FString PackageLongName = UWorld::RemovePIEPrefix(Package->GetName());
+			if (PackageLongName.IsEmpty() ||
+				AssetUtilsLPT::IsEngineOrScriptPackage(PackageLongName) ||
+				AssetUtilsLPT::IsWorldPartitionExternalPackage(PackageLongName))
+			{
+				return;
+			}
+
+			const FName PackageName(*PackageLongName);
+			if (ExcludedLevelPackageNames.Contains(PackageName))
+			{
+				return;
+			}
+
+			OutReferencedPackageNames.Add(PackageName);
+		}
+
+		void CollectDirectReferencePackages(
+			UObject* Referencer,
+			const TSet<FName>& ExcludedLevelPackageNames,
+			TSet<FName>& OutReferencedPackageNames
+		)
+		{
+			if (!IsValid(Referencer))
+			{
+				return;
+			}
+
+			// Inspect serialized instance/component properties only. Adding the owning
+			// Blueprint class package here would traverse graph-only references such as
+			// casts to the player class and pull in that class's unrelated dependencies.
+			TArray<UObject*> ReferencedObjects;
+			FReferenceFinder ReferenceFinder(ReferencedObjects, nullptr, false, true, false, true);
+			ReferenceFinder.FindReferences(Referencer);
+
+			for (UObject* ReferencedObject : ReferencedObjects)
+			{
+				AddReferencedObjectPackage(ReferencedObject, ExcludedLevelPackageNames, OutReferencedPackageNames);
+			}
 		}
 
 		void AddFallbackAssetFromPackagePath(
@@ -51,7 +115,7 @@ namespace AssetCollectorLPT
 			}
 		}
 
-		void AppendAssetsFromPackage(
+		bool AppendAssetsFromPackage(
 			IAssetRegistry& Registry,
 			const FName PackageName,
 			TSet<FSoftObjectPath>& UniquePaths,
@@ -66,7 +130,7 @@ namespace AssetCollectorLPT
 				// World Partition External Actor/Object packages are traversal roots,
 				// not preload content assets. Their dependencies are still traversed
 				// by AppendHardDependencyClosureAssets().
-				return;
+				return false;
 			}
 
 			TArray<FAssetData> PackageAssets;
@@ -80,9 +144,10 @@ namespace AssetCollectorLPT
 				{
 					AddFallbackAssetFromPackagePath(PackageLongPath, UniquePaths, OutAssets);
 				}
-				return;
+				return false;
 			}
 
+			bool bContainsWorldAsset = false;
 			for (const FAssetData& AssetData : PackageAssets)
 			{
 				if (!AssetData.IsValid() || AssetData.HasAnyPackageFlags(PKG_EditorOnly))
@@ -90,13 +155,16 @@ namespace AssetCollectorLPT
 					continue;
 				}
 
-				if (!AssetFilterLPT::ShouldIncludeAssetByClass(AssetData, Rules))
+				// World assets are level containers and should not be part of preload content candidates.
+				// Detect map packages before class filtering so they remain traversal boundaries
+				// even when the user's class filter excludes UWorld assets.
+				if (AssetData.AssetClassPath == UWorld::StaticClass()->GetClassPathName())
 				{
+					bContainsWorldAsset = true;
 					continue;
 				}
 
-				// World assets are level containers and should not be part of preload content candidates.
-				if (AssetData.AssetClassPath == UWorld::StaticClass()->GetClassPathName())
+				if (!AssetFilterLPT::ShouldIncludeAssetByClass(AssetData, Rules))
 				{
 					continue;
 				}
@@ -116,6 +184,7 @@ namespace AssetCollectorLPT
 				UniquePaths.Add(AssetPath);
 				OutAssets.Add(AssetPath);
 			}
+			return bContainsWorldAsset;
 		}
 
 		void AppendDirectDependenciesAssets(
@@ -160,6 +229,46 @@ namespace AssetCollectorLPT
 				AppendAssetsFromPackage(Registry, DependencyPackageName, UniquePaths, OutAssets);
 			}
 		}
+	}
+
+	void CollectLevelReferencedPackages(
+		ULevel* Level,
+		const TSet<FName>& ExcludedLevelPackageNames,
+		TSet<FName>& OutReferencedPackageNames,
+		int32& OutActorCount
+	)
+	{
+		OutActorCount = 0;
+		if (!Level)
+		{
+			return;
+		}
+
+		TSet<const AActor*> VisitedActors;
+		auto CollectActorReferences = [&](AActor* Actor)
+		{
+			if (!IsValid(Actor) || Actor->IsTemplate() || Actor->IsA<AWorldSettings>() || VisitedActors.Contains(Actor))
+			{
+				return;
+			}
+
+			VisitedActors.Add(Actor);
+			++OutActorCount;
+			CollectDirectReferencePackages(Actor, ExcludedLevelPackageNames, OutReferencedPackageNames);
+
+			TInlineComponentArray<UActorComponent*> Components(Actor);
+			for (UActorComponent* Component : Components)
+			{
+				CollectDirectReferencePackages(Component, ExcludedLevelPackageNames, OutReferencedPackageNames);
+			}
+		};
+
+		for (AActor* Actor : Level->Actors)
+		{
+			CollectActorReferences(Actor);
+		}
+
+		CollectActorReferences(Level->GetLevelScriptActor());
 	}
 
 	void AppendFolderRuleCandidates(
@@ -223,22 +332,36 @@ namespace AssetCollectorLPT
 		const TArray<FName>& RootPackageNames,
 		TSet<FSoftObjectPath>& UniquePaths,
 		TArray<FSoftObjectPath>& OutAssets,
-		const FLPTFilterSettings* Rules
+		const FLPTFilterSettings* Rules,
+		const TSet<FName>* ExcludedPackageNames,
+		const bool bStopAtNestedWorldPackages
 	)
 	{
 		TSet<FName> VisitedPackages;
+		TSet<FName> RootPackages;
+		RootPackages.Reserve(RootPackageNames.Num());
+		for (const FName RootPackageName : RootPackageNames)
+		{
+			RootPackages.Add(RootPackageName);
+		}
+
 		TArray<FName> PendingPackages = RootPackageNames;
 
 		while (PendingPackages.Num() > 0)
 		{
 			const FName CurrentPackageName = PendingPackages.Pop(EAllowShrinking::No);
-			if (CurrentPackageName.IsNone() || VisitedPackages.Contains(CurrentPackageName))
+			if (CurrentPackageName.IsNone() || VisitedPackages.Contains(CurrentPackageName) ||
+				(ExcludedPackageNames && ExcludedPackageNames->Contains(CurrentPackageName)))
 			{
 				continue;
 			}
 
 			VisitedPackages.Add(CurrentPackageName);
-			AppendAssetsFromPackage(Registry, CurrentPackageName, UniquePaths, OutAssets, Rules);
+			const bool bIsWorldPackage = AppendAssetsFromPackage(Registry, CurrentPackageName, UniquePaths, OutAssets, Rules);
+			if (bStopAtNestedWorldPackages && bIsWorldPackage && !RootPackages.Contains(CurrentPackageName))
+			{
+				continue;
+			}
 
 			TArray<FName> Dependencies;
 			Registry.GetDependencies(
@@ -250,7 +373,8 @@ namespace AssetCollectorLPT
 
 			for (const FName DependencyPackageName : Dependencies)
 			{
-				if (!DependencyPackageName.IsNone() && !VisitedPackages.Contains(DependencyPackageName))
+				if (!DependencyPackageName.IsNone() && !VisitedPackages.Contains(DependencyPackageName) &&
+					(!ExcludedPackageNames || !ExcludedPackageNames->Contains(DependencyPackageName)))
 				{
 					PendingPackages.Add(DependencyPackageName);
 				}

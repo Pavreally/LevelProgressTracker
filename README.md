@@ -11,40 +11,16 @@ LPT is a plugin for Unreal Engine 5 that allows you to quickly and easily create
 ## Latest Updates
 `Experimental`
 
-`Version 1.4.2`
-- Built for Unreal Engine 5.7.4.
-- Added functions: `LoadExistingLevelInstanceLPT(AActor* LevelInstanceActor, ...)` and `UnloadExistingLevelInstanceLPT(AActor* LevelInstanceActor)`
-	- FLevelStreamingDelegates Subscription: LPT subscribes to public `FLevelStreamingDelegates`.
-	- Immediate Instance Detection: `ULevelStreamingLevelInstance` is detected immediately upon calling `UWorld::AddStreamingLevel()`.
-	- Automatic Preload Trigger: Preloading from the LPT database is triggered as soon as a Level Instance is detected.
-	- Progress Tracking: Loading progress is broadcast via the existing `OnLevelLoadProgressLPT` and `OnLevelLoadedLPT` delegates.
-	- Instance Key Isolation: External instances use a unique key per streaming object, preventing conflicts between multiple Level Instances referencing the same World Asset.
-	- API Details:
-		- Does not require replacing `ALevelInstance`.
-		- Utilizes the standard `ILevelInstanceInterface`.
-		- Performs LPT preload first, then calls standard `LoadLevelInstance()`.
-		- Does not create a duplicate streaming level.
-		- Handles cases gracefully if the Level Instance is already loaded or detected by the automatic observer.
-		- Cancels preload if an unload is pending.
-	-	Usage Example:
-		- `LPTSubsystem->LoadExistingLevelInstanceLPT(LevelInstanceActor, true);`
-		- Note for Blueprint: The function is exposed in the LPT Subsystem category.
-- Bug Fixes & Improvements:
-	- Crash on Exit: Fixed a crash occurring after exiting the application when using a World Partition level in Lyra Starter Game projects.
-	- Empty External Actor Bug: Fixed an issue where an empty external actor was added when `Allow World Partition Auto Scan` and `Allow World Partition Unscoped Auto Scan` options were enabled on World Partition levels.
-	- Asset Generation during Cook: Resolved asset generation issues during project packaging using a three-layer protection approach:
-		- Persistent Cook protection.
-		- Hash-based early exit with generator versioning.
-		- Re-entrancy protection when saving LPT assets themselves.
-- What Was Fixed / Updated:
-	- Cook Cmdlet Ignore: `OnPackageSaved` now consistently ignores the Cook cmdlet.
-	- Re-entrancy Guard: Added protection against recursive calls when saving LPT assets.
-	- Hash-based Early Exit: `LevelStateHash` is now utilized as a true early exit condition.
-	- Generation Hash Versioning: Added a generation hash version to ensure existing databases rebuild once after algorithm updates.
-	- Redundant Rebuilds Avoided: Repeated saves of an unchanged World Partition level no longer trigger a full rebuild.
-	- Conditional Asset Saves: Collection assets are now saved only when actual changes occur.
-	- State Tracking: Database structure changes, creation of new records, and preset materialization are now tracked independently.
-	- Logging Improvements: Replaced the `Rebuilding` log entry with `Checking LPT state`, as rebuilds now only occur when the state actually changes.
+`Version 1.5.0`
+- Built for Unreal Engine 5.8.4.
+- Added an option to manually generate LPT data on demand. The automatic generation mode for asset lists and settings (triggered upon saving a level) has been preserved and remains optional. The generation button is located directly inside the LPT Level Settings window.
+- Expanded sublevel support:
+	- You can now automatically generate asset preload collections for all sublevels at once when saving LPT settings. Alternatively, you can manage collection lists manually by pre-generating empty entries and disabling auto-generation using dedicated buttons.
+	- Added a `Configure Sublevels` button that scans for existing sublevels and creates empty entries in the asset list collections section, visible directly in the editor's LPT settings window.
+	- Expanded the sublevel loading functionality with a more streamlined function, `LoadSubLevelLPT`. Simply specify the sublevel key and optionally enable the asset preloading option to track loading progress. Preloading progress and the final sublevel load completion event can be monitored via the main events.
+- Improved the recursive filtering algorithm for level asset lists.
+- The LPT Level Settings window is now non-modal (no longer blocks the editor while open) and can be minimized.
+- Replaced the word 'Assets' with 'Resources' in the settings fields to avoid confusion.
 
 ## What it's for
 - Tracking the progress of level asset loading.

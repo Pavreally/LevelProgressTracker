@@ -1,6 +1,8 @@
 // Pavel Gornostaev <https://github.com/Pavreally>
 
 #include "SubsytemLPT.h"
+#include "LevelPreloadDatabaseLPT.h"
+#include "Engine/LevelStreaming.h"
 #include "Engine/StreamableManager.h"
 #include "GameFramework/Actor.h"
 #include "LevelInstance/LevelInstanceInterface.h"
@@ -26,7 +28,7 @@ void ULevelProgressTrackerSubsytem::UnloadLevelInstanceLPT(const TSoftObjectPtr<
 			continue;
 		}
 
-		ULevelStreamingDynamic* StreamingLevel = LevelState->LevelInstanceState.LevelReference.Get();
+		ULevelStreaming* StreamingLevel = LevelState->GetStreamingLevelReference();
 		if (!IsValid(StreamingLevel))
 		{
 			UE_LOG(LogTemp, Warning, TEXT("LPT (UnloadLevelInstanceLPT): Invalid link. Failed to load stream level \"%s\"."), *LevelState->LevelName.ToString());
@@ -49,10 +51,28 @@ void ULevelProgressTrackerSubsytem::UnloadLevelInstanceLPT(const TSoftObjectPtr<
 			this,
 			&ULevelProgressTrackerSubsytem::OnLevelShown
 		);
-		ReleaseLevelStateHandles(LevelState.ToSharedRef(), false);
+		ReleaseLevelStateHandles(LevelState.ToSharedRef(), !LevelState->bPreloadCompleted);
 		LevelName = LevelState->LevelName;
 
-		if (LevelState->bExternallyManaged)
+		if (LevelState->bLoadExistingSublevel)
+		{
+			bool bUnloadedThroughLevelInstance = false;
+			if (ULevelStreamingLevelInstance* LevelInstanceStreaming = Cast<ULevelStreamingLevelInstance>(StreamingLevel))
+			{
+				if (ILevelInstanceInterface* LevelInstance = LevelInstanceStreaming->GetLevelInstance())
+				{
+					LevelInstance->UnloadLevelInstance();
+					bUnloadedThroughLevelInstance = true;
+				}
+			}
+
+			if (!bUnloadedThroughLevelInstance)
+			{
+				StreamingLevel->SetShouldBeVisible(false);
+				StreamingLevel->SetShouldBeLoaded(false);
+			}
+		}
+		else if (LevelState->bExternallyManaged)
 		{
 			if (ULevelStreamingLevelInstance* LevelInstanceStreaming = Cast<ULevelStreamingLevelInstance>(StreamingLevel))
 			{
@@ -72,7 +92,57 @@ void ULevelProgressTrackerSubsytem::UnloadLevelInstanceLPT(const TSoftObjectPtr<
 	}
 }
 
-void ULevelProgressTrackerSubsytem::UnloadExistingLevelInstanceLPT(AActor* LevelInstanceActor)
+void ULevelProgressTrackerSubsytem::UnloadSubLevelLPT(FName CollectionKey)
+{
+	if (bIsDeinitializing)
+	{
+		return;
+	}
+
+	const FLevelPreloadEntryLPT* ParentEntry = nullptr;
+	UAssetCollectionDataLPT* Collection = nullptr;
+	ULevelStreaming* StreamingLevel = nullptr;
+	if (!ResolveSublevelCollection(
+		GetWorld(),
+		PreloadDatabaseAsset.LoadSynchronous(),
+		CollectionKey,
+		TEXT("UnloadSubLevelLPT"),
+		ParentEntry,
+		Collection,
+		StreamingLevel))
+	{
+		return;
+	}
+
+	(void)ParentEntry;
+	(void)Collection;
+
+	const FName StateKey = GetLevelStateKey(StreamingLevel);
+	if (TSharedPtr<FLevelState> LevelState = LevelLoadedMap.FindRef(StateKey))
+	{
+		StreamingLevel->OnLevelShown.RemoveDynamic(
+			this,
+			&ULevelProgressTrackerSubsytem::OnLevelShown
+		);
+		ReleaseLevelStateHandles(LevelState.ToSharedRef(), !LevelState->bPreloadCompleted);
+		LevelLoadedMap.Remove(StateKey);
+	}
+
+	if (ULevelStreamingLevelInstance* LevelInstanceStreaming = Cast<ULevelStreamingLevelInstance>(StreamingLevel))
+	{
+		if (ILevelInstanceInterface* LevelInstance = LevelInstanceStreaming->GetLevelInstance())
+		{
+			LevelInstance->UnloadLevelInstance();
+			return;
+		}
+	}
+
+	// A regular sublevel stays configured in the parent world; only request its unload.
+	StreamingLevel->SetShouldBeVisible(false);
+	StreamingLevel->SetShouldBeLoaded(false);
+}
+
+void ULevelProgressTrackerSubsytem::UnloadPlacedLevelInstanceLPT(AActor* LevelInstanceActor)
 {
 	if (!IsValid(LevelInstanceActor))
 	{
@@ -87,7 +157,7 @@ void ULevelProgressTrackerSubsytem::UnloadExistingLevelInstanceLPT(AActor* Level
 			continue;
 		}
 
-		if (ULevelStreamingDynamic* StreamingLevel = LevelState->LevelInstanceState.LevelReference.Get())
+		if (ULevelStreaming* StreamingLevel = LevelState->GetStreamingLevelReference())
 		{
 			if (IsValid(StreamingLevel))
 			{
@@ -135,7 +205,7 @@ void ULevelProgressTrackerSubsytem::UnloadAllLevelInstanceLPT()
 			continue;
 		}
 
-		ULevelStreamingDynamic* StreamingLevel = LevelState->LevelInstanceState.LevelReference.Get();
+		ULevelStreaming* StreamingLevel = LevelState->GetStreamingLevelReference();
 		if (!IsValid(StreamingLevel))
 		{
 			continue;
@@ -148,7 +218,25 @@ void ULevelProgressTrackerSubsytem::UnloadAllLevelInstanceLPT()
 
 		if (LevelState->LoadMethod == ELevelLoadMethod::LevelStreaming)
 		{
-			if (LevelState->bExternallyManaged)
+			if (LevelState->bLoadExistingSublevel)
+			{
+				bool bUnloadedThroughLevelInstance = false;
+				if (ULevelStreamingLevelInstance* LevelInstanceStreaming = Cast<ULevelStreamingLevelInstance>(StreamingLevel))
+				{
+					if (ILevelInstanceInterface* LevelInstance = LevelInstanceStreaming->GetLevelInstance())
+					{
+						LevelInstance->UnloadLevelInstance();
+						bUnloadedThroughLevelInstance = true;
+					}
+				}
+
+				if (!bUnloadedThroughLevelInstance)
+				{
+					StreamingLevel->SetShouldBeVisible(false);
+					StreamingLevel->SetShouldBeLoaded(false);
+				}
+			}
+			else if (LevelState->bExternallyManaged)
 			{
 				if (ULevelStreamingLevelInstance* LevelInstanceStreaming = Cast<ULevelStreamingLevelInstance>(StreamingLevel))
 				{
@@ -163,6 +251,32 @@ void ULevelProgressTrackerSubsytem::UnloadAllLevelInstanceLPT()
 				StreamingLevel->SetShouldBeVisible(false);
 				StreamingLevel->SetShouldBeLoaded(false);
 				StreamingLevel->SetIsRequestingUnloadAndRemoval(true);
+			}
+		}
+	}
+
+	// A placed Level Instance may still be waiting for UE to create its streaming object.
+	TArray<TWeakObjectPtr<AActor>> PendingLevelInstanceActors;
+	for (const TPair<FName, TSharedPtr<FLevelState>>& Level : LevelLoadedMap)
+	{
+		if (!Level.Value.IsValid() || !Level.Value->bLoadPlacedLevelInstance)
+		{
+			continue;
+		}
+
+		if (AActor* LevelInstanceActor = Level.Value->ExistingLevelInstanceActor.Get())
+		{
+			PendingLevelInstanceActors.Add(LevelInstanceActor);
+		}
+	}
+
+	for (const TWeakObjectPtr<AActor>& WeakActor : PendingLevelInstanceActors)
+	{
+		if (AActor* LevelInstanceActor = WeakActor.Get())
+		{
+			if (ILevelInstanceInterface* LevelInstance = Cast<ILevelInstanceInterface>(LevelInstanceActor))
+			{
+				LevelInstance->UnloadLevelInstance();
 			}
 		}
 	}

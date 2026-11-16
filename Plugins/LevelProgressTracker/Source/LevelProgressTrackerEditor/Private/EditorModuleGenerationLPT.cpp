@@ -16,6 +16,7 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
 #include "Engine/Level.h"
+#include "Engine/LevelStreaming.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
 #include "HAL/FileManager.h"
@@ -38,7 +39,7 @@ namespace EditorModuleLPTPrivate
 	const FName DefaultCollectionKey(TEXT("Default"));
 	// Bump when generated collection semantics change so existing databases are
 	// rebuilt once instead of being incorrectly accepted by the early-out path.
-	constexpr uint32 LevelStateHashVersion = 2u;
+	constexpr uint32 LevelStateHashVersion = 4u;
 
 	template <typename TAssetClass>
 	TAssetClass* LoadOrCreateDataAsset(const FString& PackagePath, const FString& AssetName, bool& bOutCreated)
@@ -230,7 +231,8 @@ namespace EditorModuleLPTPrivate
 		IAssetRegistry& Registry,
 		const TArray<FName>& RootPackages,
 		const FLPTFilterSettings& ExclusionRules,
-		TArray<FSoftObjectPath>& InOutCandidateAssets)
+		TArray<FSoftObjectPath>& InOutCandidateAssets,
+		const TSet<FName>* ExcludedPackageNames)
 	{
 		if (RootPackages.IsEmpty() || InOutCandidateAssets.IsEmpty())
 		{
@@ -271,7 +273,8 @@ namespace EditorModuleLPTPrivate
 		while (PendingPackages.Num() > 0)
 		{
 			const FName CurrentPackageName = PendingPackages.Pop(EAllowShrinking::No);
-			if (CurrentPackageName.IsNone() || VisitedPackages.Contains(CurrentPackageName))
+			if (CurrentPackageName.IsNone() || VisitedPackages.Contains(CurrentPackageName) ||
+				(ExcludedPackageNames && ExcludedPackageNames->Contains(CurrentPackageName)))
 			{
 				continue;
 			}
@@ -301,7 +304,8 @@ namespace EditorModuleLPTPrivate
 
 			for (const FName DependencyPackageName : HardDependencies)
 			{
-				if (!DependencyPackageName.IsNone() && !VisitedPackages.Contains(DependencyPackageName))
+				if (!DependencyPackageName.IsNone() && !VisitedPackages.Contains(DependencyPackageName) &&
+					(!ExcludedPackageNames || !ExcludedPackageNames->Contains(DependencyPackageName)))
 				{
 					PendingPackages.Add(DependencyPackageName);
 				}
@@ -347,6 +351,7 @@ namespace EditorModuleLPTPrivate
 		uint32 Hash = ComputeFilterSettingsHash(EffectiveFilterSettings);
 		HashName(Hash, CollectionAsset->CollectionKey);
 		Hash = HashCombineFast(Hash, GetTypeHash(CollectionAsset->bAutoGenerate));
+		HashString(Hash, CollectionAsset->TargetSublevel.ToSoftObjectPath().ToString());
 
 		const FString GroupTagsAsString = CollectionAsset->GroupTags.ToStringSimple();
 		HashString(Hash, GroupTagsAsString);
@@ -525,7 +530,11 @@ namespace EditorModuleLPTPrivate
 		return UPackage::SavePackage(Package, AssetObject, *PackageFilename, SaveArgs);
 	}
 
-	UAssetCollectionDataLPT* GetOrCreateCollectionAsset(const ULevelProgressTrackerSettings* Settings, const FString& LevelAssetName, const FName CollectionKey)
+	UAssetCollectionDataLPT* GetOrCreateCollectionAsset(
+		const ULevelProgressTrackerSettings* Settings,
+		const FString& LevelAssetName,
+		const FName CollectionKey,
+		const FSoftObjectPath& TargetSublevelPath)
 	{
 		if (!Settings)
 		{
@@ -549,7 +558,11 @@ namespace EditorModuleLPTPrivate
 		}
 
 		FString AssetName;
-		if (SanitizedCollectionKey.Equals(TEXT("Default"), ESearchCase::IgnoreCase))
+		if (TargetSublevelPath.IsValid())
+		{
+			AssetName = FString::Printf(TEXT("DA_LPT_%s"), *SanitizedCollectionKey);
+		}
+		else if (SanitizedCollectionKey.Equals(TEXT("Default"), ESearchCase::IgnoreCase))
 		{
 			AssetName = FString::Printf(TEXT("DA_LPT_Default_%s"), *SanitizedLevelName);
 		}
@@ -706,7 +719,6 @@ namespace EditorModuleLPTPrivate
 		{
 			CollectionAsset->AssetList = MoveTemp(DeduplicatedAssetList);
 		}
-
 		TSet<FSoftObjectPath> UniqueLayerAssets;
 		TArray<TSoftObjectPtr<UDataLayerAsset>> DeduplicatedLayerAssets;
 		DeduplicatedLayerAssets.Reserve(CollectionAsset->TargetDataLayers.Num());
@@ -783,6 +795,7 @@ namespace EditorModuleLPTPrivate
 		CollectionAsset->TargetDataLayers = Preset.TargetDataLayers;
 		CollectionAsset->TargetDataLayerNames = Preset.TargetDataLayerNames;
 		CollectionAsset->TargetCellRules = Preset.TargetCellRules;
+		CollectionAsset->TargetSublevel = Preset.TargetSublevel;
 	}
 
 	bool MaterializeCollectionPresets(
@@ -801,7 +814,13 @@ namespace EditorModuleLPTPrivate
 		for (const FLPTCollectionPresetLPT& Preset : FilterSettingsAsset->CollectionPresets)
 		{
 			const FName PresetCollectionKey = Preset.CollectionKey.IsNone() ? DefaultCollectionKey : Preset.CollectionKey;
-			UAssetCollectionDataLPT* CollectionAsset = GetOrCreateCollectionAsset(Settings, LevelAssetName, PresetCollectionKey);
+			const FSoftObjectPath TargetSublevelPath = Preset.TargetSublevel.ToSoftObjectPath();
+			UAssetCollectionDataLPT* CollectionAsset = GetOrCreateCollectionAsset(
+				Settings,
+				LevelAssetName,
+				PresetCollectionKey,
+				TargetSublevelPath
+			);
 			if (!CollectionAsset)
 			{
 				UE_LOG(LogLPTEditor, Warning, TEXT("Failed to materialize collection preset '%s' for level '%s'."),
@@ -817,7 +836,8 @@ namespace EditorModuleLPTPrivate
 				CollectionAsset->GroupTags != Preset.GroupTags ||
 				CollectionAsset->TargetDataLayers != Preset.TargetDataLayers ||
 				CollectionAsset->TargetDataLayerNames != Preset.TargetDataLayerNames ||
-				CollectionAsset->TargetCellRules != Preset.TargetCellRules;
+				CollectionAsset->TargetCellRules != Preset.TargetCellRules ||
+				CollectionAsset->TargetSublevel.ToSoftObjectPath() != Preset.TargetSublevel.ToSoftObjectPath();
 
 			if (bPresetChanged)
 			{
@@ -838,6 +858,32 @@ namespace EditorModuleLPTPrivate
 			}
 
 			const FSoftObjectPath CollectionPath(CollectionAsset->GetPathName());
+			if (TargetSublevelPath.IsValid())
+			{
+				for (int32 CollectionIndex = InOutEntry.Collections.Num() - 1; CollectionIndex >= 0; --CollectionIndex)
+				{
+					const FSoftObjectPath ExistingCollectionPath = InOutEntry.Collections[CollectionIndex].ToSoftObjectPath();
+					if (!ExistingCollectionPath.IsValid() || ExistingCollectionPath == CollectionPath)
+					{
+						continue;
+					}
+
+					const UAssetCollectionDataLPT* ExistingCollection = InOutEntry.Collections[CollectionIndex].LoadSynchronous();
+					if (ExistingCollection &&
+						ExistingCollection->CollectionKey == PresetCollectionKey &&
+						ExistingCollection->TargetSublevel.ToSoftObjectPath() == TargetSublevelPath)
+					{
+						UE_LOG(LogLPTEditor, Log, TEXT("Replacing obsolete collection reference '%s' with '%s' for sublevel '%s'. The obsolete asset file was left in place."),
+							*ExistingCollectionPath.ToString(),
+							*CollectionPath.ToString(),
+							*TargetSublevelPath.ToString()
+						);
+						InOutEntry.Collections.RemoveAt(CollectionIndex);
+						bEntryModified = true;
+					}
+				}
+			}
+
 			bool bExistsInEntry = false;
 			for (const TSoftObjectPtr<UAssetCollectionDataLPT>& CollectionRef : InOutEntry.Collections)
 			{
@@ -905,21 +951,136 @@ namespace EditorModuleLPTPrivate
 		return CollectionRules;
 	}
 
+	ULevel* ResolveStreamingSublevel(UWorld* ParentWorld, const FSoftObjectPath& TargetSublevelPath, const FName TargetPackageName)
+	{
+		if (!ParentWorld || TargetPackageName.IsNone())
+		{
+			return nullptr;
+		}
+
+		for (ULevel* Level : ParentWorld->GetLevels())
+		{
+			if (Level && FName(*UWorld::RemovePIEPrefix(Level->GetOutermost()->GetName())) == TargetPackageName)
+			{
+				return Level;
+			}
+		}
+
+		for (ULevelStreaming* StreamingLevel : ParentWorld->GetStreamingLevels())
+		{
+			if (!StreamingLevel)
+			{
+				continue;
+			}
+
+			const FString StreamingPackageName = UWorld::RemovePIEPrefix(
+				StreamingLevel->GetWorldAsset().ToSoftObjectPath().GetLongPackageName()
+			);
+			if (FName(*StreamingPackageName) == TargetPackageName)
+			{
+				if (ULevel* LoadedLevel = StreamingLevel->GetLoadedLevel())
+				{
+					return LoadedLevel;
+				}
+				break;
+			}
+		}
+
+		if (UWorld* SublevelWorld = Cast<UWorld>(TargetSublevelPath.TryLoad()))
+		{
+			return SublevelWorld->PersistentLevel;
+		}
+
+		return nullptr;
+	}
+
 	TArray<FSoftObjectPath> BuildFilteredAssetsForRules(
 		UWorld* SavedWorld,
 		IAssetRegistry& Registry,
-		const FLPTFilterSettings& EffectiveRules)
+		const FLPTFilterSettings& EffectiveRules,
+		const FSoftObjectPath& TargetSublevelPath,
+		bool& bOutTargetLevelResolved)
 	{
+		bOutTargetLevelResolved = true;
 		TArray<FSoftObjectPath> CandidateAssets;
 		TSet<FSoftObjectPath> UniqueCandidateAssets;
 		TArray<FName> TraversalRootPackages;
+		TSet<FName> ExcludedLevelPackageNames;
 		const bool bIsWorldPartition = SavedWorld && SavedWorld->IsPartitionedWorld();
 
 		if (!bIsWorldPartition)
 		{
-			const FName LevelPackageName = FName(*SavedWorld->GetOutermost()->GetName());
-			TraversalRootPackages = { LevelPackageName };
-			AssetCollectorLPT::AppendHardDependencyClosureAssets(Registry, TraversalRootPackages, UniqueCandidateAssets, CandidateAssets, &EffectiveRules);
+			const FString ParentPackagePath = UWorld::RemovePIEPrefix(SavedWorld->GetOutermost()->GetName());
+			const FName ParentPackageName(*ParentPackagePath);
+			const FString NormalizedTargetSublevelPath = TargetSublevelPath.IsValid()
+				? UWorld::RemovePIEPrefix(TargetSublevelPath.GetLongPackageName())
+				: FString();
+			const FName TargetSublevelPackageName(*NormalizedTargetSublevelPath);
+
+			ExcludedLevelPackageNames.Add(ParentPackageName);
+			for (const ULevelStreaming* StreamingLevel : SavedWorld->GetStreamingLevels())
+			{
+				if (!StreamingLevel)
+				{
+					continue;
+				}
+
+				const FString StreamingPackagePath = UWorld::RemovePIEPrefix(
+					StreamingLevel->GetWorldAsset().ToSoftObjectPath().GetLongPackageName()
+				);
+				if (!StreamingPackagePath.IsEmpty())
+				{
+					ExcludedLevelPackageNames.Add(FName(*StreamingPackagePath));
+				}
+			}
+
+			const bool bTargetsStreamingSublevel = TargetSublevelPath.IsValid() &&
+				!TargetSublevelPackageName.IsNone() &&
+				TargetSublevelPackageName != ParentPackageName;
+			ULevel* TargetLevel = bTargetsStreamingSublevel
+				? ResolveStreamingSublevel(SavedWorld, TargetSublevelPath, TargetSublevelPackageName)
+				: SavedWorld->PersistentLevel.Get();
+
+			if (!TargetLevel)
+			{
+				bOutTargetLevelResolved = false;
+				UE_LOG(LogLPTEditor, Warning, TEXT("Could not resolve target level '%s' while collecting resource references for '%s'. No level references were collected."),
+					TargetSublevelPath.IsValid() ? *TargetSublevelPath.ToString() : TEXT("Persistent Level"),
+					*SavedWorld->GetOutermost()->GetName()
+				);
+			}
+			else
+			{
+				TSet<FName> ReferencedPackageNames;
+				int32 ActorCount = 0;
+				AssetCollectorLPT::CollectLevelReferencedPackages(
+					TargetLevel,
+					ExcludedLevelPackageNames,
+					ReferencedPackageNames,
+					ActorCount
+				);
+
+				TraversalRootPackages = ReferencedPackageNames.Array();
+				TraversalRootPackages.Sort([](const FName& A, const FName& B) { return A.LexicalLess(B); });
+				AssetCollectorLPT::AppendHardDependencyClosureAssets(
+					Registry,
+					TraversalRootPackages,
+					UniqueCandidateAssets,
+					CandidateAssets,
+					&EffectiveRules,
+					&ExcludedLevelPackageNames,
+					true
+				);
+
+				UE_LOG(LogLPTEditor, Log, TEXT("Non-World Partition resource-reference scan for '%s' (target: '%s'): %d actor(s), %d referenced package(s), %d resource reference(s); excluded %d level package(s)."),
+					*SavedWorld->GetOutermost()->GetName(),
+					TargetSublevelPath.IsValid() ? *TargetSublevelPath.GetLongPackageName() : TEXT("Persistent Level"),
+					ActorCount,
+					TraversalRootPackages.Num(),
+					CandidateAssets.Num(),
+					ExcludedLevelPackageNames.Num()
+				);
+			}
 		}
 		else
 		{
@@ -983,7 +1144,16 @@ namespace EditorModuleLPTPrivate
 			if (RuleSeedPackages.Num() > 0)
 			{
 				const TArray<FName> RuleSeedPackageArray = RuleSeedPackages.Array();
-				AssetCollectorLPT::AppendHardDependencyClosureAssets(Registry, RuleSeedPackageArray, UniqueCandidateAssets, CandidateAssets, &FinalFilterRules);
+				const TSet<FName>* ExcludedPackageNames = bIsWorldPartition ? nullptr : &ExcludedLevelPackageNames;
+				AssetCollectorLPT::AppendHardDependencyClosureAssets(
+					Registry,
+					RuleSeedPackageArray,
+					UniqueCandidateAssets,
+					CandidateAssets,
+					&FinalFilterRules,
+					ExcludedPackageNames,
+					!bIsWorldPartition
+				);
 			}
 
 			PostExpansionFilterRules.AssetRules.Empty();
@@ -991,7 +1161,8 @@ namespace EditorModuleLPTPrivate
 		}
 		else if (FinalFilterRules.bUseExclusionMode && bHasAssetOrFolderRules)
 		{
-			PruneExcludedDependencyBranches(Registry, TraversalRootPackages, FinalFilterRules, CandidateAssets);
+			const TSet<FName>* ExcludedPackageNames = bIsWorldPartition ? nullptr : &ExcludedLevelPackageNames;
+			PruneExcludedDependencyBranches(Registry, TraversalRootPackages, FinalFilterRules, CandidateAssets, ExcludedPackageNames);
 		}
 
 		TArray<FSoftObjectPath> FilteredAssets = ULevelPreloadAssetFilter::FilterAssets(CandidateAssets, &PostExpansionFilterRules);
@@ -999,6 +1170,14 @@ namespace EditorModuleLPTPrivate
 		{
 			return A.ToString() < B.ToString();
 		});
+		if (!bIsWorldPartition)
+		{
+			UE_LOG(LogLPTEditor, Verbose, TEXT("Non-World Partition filtered resource-reference count for '%s' (target: '%s'): %d."),
+				*SavedWorld->GetOutermost()->GetName(),
+				TargetSublevelPath.IsValid() ? *TargetSublevelPath.GetLongPackageName() : TEXT("Persistent Level"),
+				FilteredAssets.Num()
+			);
+		}
 		return FilteredAssets;
 	}
 }

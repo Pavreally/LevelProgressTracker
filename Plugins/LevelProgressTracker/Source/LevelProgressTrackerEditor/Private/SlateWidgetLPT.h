@@ -7,15 +7,20 @@
 
 class UWorld;
 class ULevelPreloadDatabaseLPT;
+class UAssetFilterSettingsLPT;
 
 namespace SlateWidgetLPT
 {
+	bool TryActivateOpenLevelRulesWindow();
+
 	void OpenLevelRulesWindow(
 		ULevelPreloadDatabaseLPT* DatabaseAsset,
-		const TSoftObjectPtr<UWorld>& LevelSoftPtr,
+		UAssetFilterSettingsLPT* FilterSettingsAsset,
 		const FString& LevelDisplayName,
 		bool bIsWorldPartition,
-		const TFunction<bool(ULevelPreloadDatabaseLPT*)>& SaveDatabaseAssetFn
+		bool bHasSublevels,
+		const TFunction<bool(ULevelPreloadDatabaseLPT*, UAssetFilterSettingsLPT*)>& SaveAndGenerateFn,
+		const TFunction<bool(UAssetFilterSettingsLPT*)>& AddAllDataLayersFn,
+		const TFunction<bool(UAssetFilterSettingsLPT*)>& ConfigureSublevelsFn
 	);
 }
-
